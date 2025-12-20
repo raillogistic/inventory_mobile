@@ -10,6 +10,7 @@ import type { GraphQLError } from "graphql";
 import {
   CAMPAGNE_INVENTAIRE_LIST_QUERY,
   CREATE_ENREGISTREMENT_INVENTAIRE_MUTATION,
+  ENREGISTREMENT_INVENTAIRE_LIST_QUERY,
   GROUPE_COMPTAGE_LIST_QUERY,
   LOCATION_LIST_QUERY,
   type CampagneInventaire,
@@ -17,6 +18,9 @@ import {
   type CampagneInventaireListVariables,
   type CreateEnregistrementInventaireData,
   type CreateEnregistrementInventaireVariables,
+  type EnregistrementInventaireListData,
+  type EnregistrementInventaireListItem,
+  type EnregistrementInventaireListVariables,
   type EnregistrementInventaireInput,
   type GroupeComptage,
   type GroupeComptageListData,
@@ -242,6 +246,56 @@ export function useLocationList(
 
   return {
     locations: result.data?.locations ?? [],
+    loading: result.loading,
+    error: result.error ?? null,
+    errorMessage: getApolloErrorMessage(result.error ?? null),
+    refetch: result.refetch,
+  };
+}
+
+/** Hook state for scan listing. */
+export type EnregistrementInventaireListState = {
+  /** Scan records returned by the query. */
+  scans: EnregistrementInventaireListItem[];
+  /** Total scan count for the selected filters. */
+  totalCount: number | null;
+  /** Whether the query is currently loading. */
+  loading: boolean;
+  /** Error returned by Apollo, if any. */
+  error: ApolloError | null;
+  /** Derived error message for display. */
+  errorMessage: string | null;
+  /** Refetch the scan list with optional variables. */
+  refetch: (
+    variables?: EnregistrementInventaireListVariables
+  ) => Promise<ApolloQueryResult<EnregistrementInventaireListData>>;
+};
+
+/** Options for controlling scan list queries. */
+export type EnregistrementInventaireListOptions = {
+  /** Skip the query when prerequisites are missing. */
+  skip?: boolean;
+};
+
+/**
+ * Fetch scans for the selected campaign, group, and location.
+ */
+export function useEnregistrementInventaireList(
+  variables: EnregistrementInventaireListVariables = {},
+  options: EnregistrementInventaireListOptions = {}
+): EnregistrementInventaireListState {
+  const result = useQuery<
+    EnregistrementInventaireListData,
+    EnregistrementInventaireListVariables
+  >(ENREGISTREMENT_INVENTAIRE_LIST_QUERY, {
+    variables,
+    fetchPolicy: "cache-and-network",
+    skip: options.skip,
+  });
+
+  return {
+    scans: result.data?.enregistrementinventaires ?? [],
+    totalCount: result.data?.enregistrementinventaire_count ?? null,
     loading: result.loading,
     error: result.error ?? null,
     errorMessage: getApolloErrorMessage(result.error ?? null),

@@ -220,10 +220,6 @@ export default function GroupSelectionScreen() {
   const highlightColor = useThemeColor({ light: "#2563EB", dark: "#60A5FA" }, "tint");
   const mutedColor = useThemeColor({ light: "#64748B", dark: "#94A3B8" }, "icon");
   const inputTextColor = useThemeColor({}, "text");
-  const buttonTextColor = useThemeColor(
-    { light: "#FFFFFF", dark: "#0F172A" },
-    "text"
-  );
   const placeholderColor = useThemeColor(
     { light: "#94A3B8", dark: "#6B7280" },
     "icon"
@@ -297,7 +293,7 @@ export default function GroupSelectionScreen() {
     return () => clearTimeout(timer);
   }, [pinPromptGroup]);
 
-  /** Validate the PIN and store the selected group. */
+  /** Validate the PIN, store the selected group, and navigate to locations. */
   const handleConfirmPin = useCallback(
     (enteredPin: string) => {
       if (!pinPromptGroup) {
@@ -331,8 +327,9 @@ export default function GroupSelectionScreen() {
       setPinPromptGroup(null);
       setPinValue("");
       setPinError(null);
+      router.push("/(drawer)/lieux");
     },
-    [pinPromptGroup, setGroup, pinInputRef]
+    [pinPromptGroup, router, setGroup, pinInputRef]
   );
 
   /** Auto-validate PIN once all digits are entered. */
@@ -374,27 +371,6 @@ export default function GroupSelectionScreen() {
 
   const showInitialLoading = loading && groups.length === 0 && !isRefreshing;
   const showInlineError = Boolean(errorMessage && groups.length > 0);
-
-  if (!campaignId) {
-    return (
-      <ThemedView style={styles.container}>
-        <View style={styles.missingContainer}>
-          <ThemedText type="title">Aucune campagne selectionnee</ThemedText>
-          <ThemedText style={[styles.missingText, { color: mutedColor }]}>
-            Retournez a la liste des campagnes pour continuer.
-          </ThemedText>
-          <TouchableOpacity
-            style={[styles.retryButton, { backgroundColor: highlightColor }]}
-            onPress={handleChangeCampaign}
-          >
-            <ThemedText style={styles.retryButtonText}>
-              Voir les campagnes
-            </ThemedText>
-          </TouchableOpacity>
-        </View>
-      </ThemedView>
-    );
-  }
 
   /** Render the list header with campaign context and search. */
   const renderHeader = useCallback(() => {
@@ -537,29 +513,26 @@ export default function GroupSelectionScreen() {
     showInitialLoading,
   ]);
 
-  /** Render the footer action once a group is selected. */
-  const renderFooter = useCallback(() => {
-    if (!selectedGroupId) {
-      return null;
-    }
-
+  if (!campaignId) {
     return (
-      <View style={styles.footerContainer}>
-        <TouchableOpacity
-          style={[styles.continueButton, { backgroundColor: highlightColor }]}
-          onPress={() => router.push("/(drawer)/lieux")}
-          accessibilityRole="button"
-          accessibilityLabel="Continuer vers les lieux"
-        >
-          <ThemedText
-            style={[styles.continueButtonText, { color: buttonTextColor }]}
-          >
-            Continuer vers les lieux
+      <ThemedView style={styles.container}>
+        <View style={styles.missingContainer}>
+          <ThemedText type="title">Aucune campagne selectionnee</ThemedText>
+          <ThemedText style={[styles.missingText, { color: mutedColor }]}>
+            Retournez a la liste des campagnes pour continuer.
           </ThemedText>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={[styles.retryButton, { backgroundColor: highlightColor }]}
+            onPress={handleChangeCampaign}
+          >
+            <ThemedText style={styles.retryButtonText}>
+              Voir les campagnes
+            </ThemedText>
+          </TouchableOpacity>
+        </View>
+      </ThemedView>
     );
-  }, [buttonTextColor, highlightColor, router, selectedGroupId]);
+  }
 
   return (
     <ThemedView style={styles.container}>
@@ -569,7 +542,6 @@ export default function GroupSelectionScreen() {
         renderItem={renderItem}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmptyComponent}
-        ListFooterComponent={renderFooter}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         refreshing={isRefreshing}
@@ -718,19 +690,6 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 24,
     gap: 12,
-  },
-  footerContainer: {
-    marginTop: 12,
-  },
-  continueButton: {
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  continueButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
   },
   modalOverlay: {
     flex: 1,

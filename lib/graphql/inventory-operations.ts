@@ -193,6 +193,63 @@ export const LOCATION_LIST_QUERY = gql`
   }
 `;
 
+/** Scan list item returned by the inventory API. */
+export type EnregistrementInventaireListItem = {
+  /** Unique identifier for the scan record. */
+  id: string;
+  /** Scanned article code. */
+  code_article: string;
+  /** Capture timestamp. */
+  capture_le: string | null;
+};
+
+/** Variables for the enregistrementinventaires query. */
+export type EnregistrementInventaireListVariables = {
+  /** Campaign id filter for the scan list. */
+  campagne?: string | null;
+  /** Group id filter for the scan list. */
+  groupe?: string | null;
+  /** Location id filter for the scan list. */
+  lieu?: string | null;
+  /** Optional limit for query results. */
+  limit?: number | null;
+};
+
+/** Response payload for the enregistrementinventaires query. */
+export type EnregistrementInventaireListData = {
+  /** Scan list returned by the API. */
+  enregistrementinventaires: EnregistrementInventaireListItem[];
+  /** Total count of scans matching the filters. */
+  enregistrementinventaire_count: number | null;
+};
+
+/** GraphQL query for listing scan records. */
+export const ENREGISTREMENT_INVENTAIRE_LIST_QUERY = gql`
+  query EnregistrementInventaireList(
+    $campagne: ID
+    $groupe: ID
+    $lieu: ID
+    $limit: Int
+  ) {
+    enregistrementinventaires(
+      campagne: $campagne
+      groupe: $groupe
+      lieu: $lieu
+      limit: $limit
+      ordering: "-capture_le"
+    ) {
+      id
+      code_article
+      capture_le
+    }
+    enregistrementinventaire_count(
+      campagne: $campagne
+      groupe: $groupe
+      lieu: $lieu
+    )
+  }
+`;
+
 /** Input payload for creating an inventory scan. */
 export type EnregistrementInventaireInput = {
   /** Campaign id associated with the scan. */

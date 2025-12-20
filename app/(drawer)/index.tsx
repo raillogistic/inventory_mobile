@@ -174,10 +174,6 @@ export default function CampaignSelectionScreen() {
     "icon"
   );
   const inputTextColor = useThemeColor({}, "text");
-  const buttonTextColor = useThemeColor(
-    { light: "#FFFFFF", dark: "#0F172A" },
-    "text"
-  );
   const placeholderColor = useThemeColor(
     { light: "#94A3B8", dark: "#6B7280" },
     "icon"
@@ -188,12 +184,13 @@ export default function CampaignSelectionScreen() {
     setSearchText(value);
   }, []);
 
-  /** Store the selected campaign in the comptage session. */
+  /** Store the selected campaign and navigate to group selection. */
   const handleSelectCampaign = useCallback(
     (campaign: CampagneInventaire) => {
       setCampaign(campaign);
+      router.push("/(drawer)/groupes");
     },
-    [setCampaign]
+    [router, setCampaign]
   );
 
   /** Retry campaign list retrieval after an error. */
@@ -210,15 +207,6 @@ export default function CampaignSelectionScreen() {
       setIsRefreshing(false);
     }
   }, [queryVariables, refetch]);
-
-  /** Navigate to the comptage group selection screen. */
-  const handleContinue = useCallback(() => {
-    if (!selectedCampaignId) {
-      return;
-    }
-
-    router.push("/(drawer)/groupes");
-  }, [router, selectedCampaignId]);
 
   /** Render a single campaign list row. */
   const renderItem = useCallback(
@@ -372,30 +360,6 @@ export default function CampaignSelectionScreen() {
     showInitialLoading,
   ]);
 
-  /** Render the footer action once a campaign is selected. */
-  const renderFooter = useCallback(() => {
-    if (!selectedCampaignId) {
-      return null;
-    }
-
-    return (
-      <View style={styles.footerContainer}>
-        <TouchableOpacity
-          style={[styles.continueButton, { backgroundColor: highlightColor }]}
-          onPress={handleContinue}
-          accessibilityRole="button"
-          accessibilityLabel="Continuer vers les groupes"
-        >
-          <ThemedText
-            style={[styles.continueButtonText, { color: buttonTextColor }]}
-          >
-            Continuer vers les groupes
-          </ThemedText>
-        </TouchableOpacity>
-      </View>
-    );
-  }, [buttonTextColor, handleContinue, highlightColor, selectedCampaignId]);
-
   return (
     <ThemedView style={styles.container}>
       <FlatList
@@ -404,7 +368,6 @@ export default function CampaignSelectionScreen() {
         renderItem={renderItem}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmptyComponent}
-        ListFooterComponent={renderFooter}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         refreshing={isRefreshing}
@@ -492,19 +455,6 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 24,
     gap: 12,
-  },
-  footerContainer: {
-    marginTop: 12,
-  },
-  continueButton: {
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  continueButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
   },
   card: {
     borderWidth: 1,

@@ -135,10 +135,6 @@ export default function LocationSelectionScreen() {
   const highlightColor = useThemeColor({ light: "#2563EB", dark: "#60A5FA" }, "tint");
   const mutedColor = useThemeColor({ light: "#64748B", dark: "#94A3B8" }, "icon");
   const inputTextColor = useThemeColor({}, "text");
-  const buttonTextColor = useThemeColor(
-    { light: "#FFFFFF", dark: "#0F172A" },
-    "text"
-  );
   const placeholderColor = useThemeColor(
     { light: "#94A3B8", dark: "#6B7280" },
     "icon"
@@ -154,12 +150,13 @@ export default function LocationSelectionScreen() {
     setBarcodeText(value);
   }, []);
 
-  /** Store the selected location in the comptage session. */
+  /** Store the selected location and navigate to the scan screen. */
   const handleSelectLocation = useCallback(
     (location: Location) => {
       setLocation(location);
+      router.push("/(drawer)/scan");
     },
-    [setLocation]
+    [router, setLocation]
   );
 
   /** Navigate back to the group selection and reset selection. */
@@ -182,15 +179,6 @@ export default function LocationSelectionScreen() {
       setIsRefreshing(false);
     }
   }, [queryVariables, refetch]);
-
-  /** Navigate to the scan screen once a location is selected. */
-  const handleContinue = useCallback(() => {
-    if (!selectedLocationId) {
-      return;
-    }
-
-    router.push("/(drawer)/scan");
-  }, [router, selectedLocationId]);
 
   /** Render a single location list row. */
   const renderItem = useCallback(
@@ -220,27 +208,6 @@ export default function LocationSelectionScreen() {
 
   const showInitialLoading = loading && locations.length === 0 && !isRefreshing;
   const showInlineError = Boolean(errorMessage && locations.length > 0);
-
-  if (!groupId) {
-    return (
-      <ThemedView style={styles.container}>
-        <View style={styles.missingContainer}>
-          <ThemedText type="title">Aucun groupe selectionne</ThemedText>
-          <ThemedText style={[styles.missingText, { color: mutedColor }]}>
-            Retournez a la liste des groupes pour continuer.
-          </ThemedText>
-          <TouchableOpacity
-            style={[styles.retryButton, { backgroundColor: highlightColor }]}
-            onPress={handleChangeGroup}
-          >
-            <ThemedText style={styles.retryButtonText}>
-              Voir les groupes
-            </ThemedText>
-          </TouchableOpacity>
-        </View>
-      </ThemedView>
-    );
-  }
 
   /** Render the list header with group context and search. */
   const renderHeader = useCallback(() => {
@@ -404,29 +371,26 @@ export default function LocationSelectionScreen() {
     showInitialLoading,
   ]);
 
-  /** Render the footer action once a location is selected. */
-  const renderFooter = useCallback(() => {
-    if (!selectedLocationId) {
-      return null;
-    }
-
+  if (!groupId) {
     return (
-      <View style={styles.footerContainer}>
-        <TouchableOpacity
-          style={[styles.continueButton, { backgroundColor: highlightColor }]}
-          onPress={handleContinue}
-          accessibilityRole="button"
-          accessibilityLabel="Continuer vers le scan"
-        >
-          <ThemedText
-            style={[styles.continueButtonText, { color: buttonTextColor }]}
-          >
-            Continuer vers le scan
+      <ThemedView style={styles.container}>
+        <View style={styles.missingContainer}>
+          <ThemedText type="title">Aucun groupe selectionne</ThemedText>
+          <ThemedText style={[styles.missingText, { color: mutedColor }]}>
+            Retournez a la liste des groupes pour continuer.
           </ThemedText>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={[styles.retryButton, { backgroundColor: highlightColor }]}
+            onPress={handleChangeGroup}
+          >
+            <ThemedText style={styles.retryButtonText}>
+              Voir les groupes
+            </ThemedText>
+          </TouchableOpacity>
+        </View>
+      </ThemedView>
     );
-  }, [buttonTextColor, handleContinue, highlightColor, selectedLocationId]);
+  }
 
   return (
     <ThemedView style={styles.container}>
@@ -436,7 +400,6 @@ export default function LocationSelectionScreen() {
         renderItem={renderItem}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmptyComponent}
-        ListFooterComponent={renderFooter}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         refreshing={isRefreshing}
@@ -575,19 +538,6 @@ const styles = StyleSheet.create({
   selectedBadgeText: {
     fontSize: 12,
     color: "#FFFFFF",
-    fontWeight: "600",
-  },
-  footerContainer: {
-    marginTop: 12,
-  },
-  continueButton: {
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  continueButtonText: {
-    fontSize: 16,
     fontWeight: "600",
   },
   missingContainer: {

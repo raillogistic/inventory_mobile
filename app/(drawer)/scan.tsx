@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -21,9 +27,14 @@ import { useComptageSession } from "@/hooks/use-comptage-session";
 import { useThemeColor } from "@/hooks/use-theme-color";
 import {
   type EnregistrementInventaireInput,
+  type EnregistrementInventaireListItem,
+  type EnregistrementInventaireListVariables,
   type EnregistrementInventaireResult,
 } from "@/lib/graphql/inventory-operations";
-import { useCreateEnregistrementInventaire } from "@/lib/graphql/inventory-hooks";
+import {
+  useCreateEnregistrementInventaire,
+  useEnregistrementInventaireList,
+} from "@/lib/graphql/inventory-hooks";
 
 /** Payload used to render recent scan entries. */
 type RecentScan = {
@@ -34,6 +45,11 @@ type RecentScan = {
   /** Capture timestamp as an ISO string. */
   capturedAt: string;
 };
+
+/** Scan payloads used to build local entries. */
+type EnregistrementInventaireSummary =
+  | EnregistrementInventaireResult
+  | EnregistrementInventaireListItem;
 
 /** Origin source of the scan capture. */
 type ScanSource = "manual" | "camera";
@@ -63,7 +79,7 @@ function formatTimestamp(value: string): string {
  * Convert API scan response into a local list item.
  */
 function buildRecentScan(
-  result: EnregistrementInventaireResult | null,
+  result: EnregistrementInventaireSummary | null,
   fallbackCode: string
 ): RecentScan {
   const now = new Date().toISOString();
@@ -75,6 +91,62 @@ function buildRecentScan(
 }
 
 /**
+ * Convert a scan list item into a recent scan entry.
+ */
+function mapScanItemToRecentScan(
+  item: EnregistrementInventaireListItem
+): RecentScan {
+  return buildRecentScan(item, item.code_article);
+}
+
+/**
+ * Build a stable key for a scan entry.
+ */
+function getScanKey(scan: RecentScan): string {
+  return scan.id ?? `${scan.code}-${scan.capturedAt}`;
+}
+
+/**
+ * Merge scans, keeping unique entries in order.
+ */
+function mergeUniqueScans(
+  primary: RecentScan[],
+  secondary: RecentScan[]
+): RecentScan[] {
+  const seen = new Set<string>();
+  const merged: RecentScan[] = [];
+
+  for (const scan of primary) {
+    const key = getScanKey(scan);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(scan);
+  }
+
+  for (const scan of secondary) {
+    const key = getScanKey(scan);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(scan);
+  }
+
+  return merged;
+}
+
+/**
+ * Normalize scan codes for comparison.
+ */
+function normalizeScanCode(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+/**
  * Scan capture screen for the comptage flow.
  */
 export default function ScanScreen() {
@@ -82,16 +154,38 @@ export default function ScanScreen() {
   const { session, setLocation } = useComptageSession();
   const [codeValue, setCodeValue] = useState<string>("");
   const [localError, setLocalError] = useState<string | null>(null);
-  const [recentScans, setRecentScans] = useState<RecentScan[]>([]);
+  const [localScans, setLocalScans] = useState<RecentScan[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isScanLocked, setIsScanLocked] = useState(false);
   const scanCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scanLockRef = useRef(false);
+  const lastCameraScanRef = useRef<{ code: string; at: number } | null>(null);
 
   const campaignId = session.campaign?.id ?? null;
   const groupId = session.group?.id ?? null;
   const locationId = session.location?.id ?? null;
+  const scanQueryVariables = useMemo<EnregistrementInventaireListVariables>(
+    () => ({
+      campagne: campaignId,
+      groupe: groupId,
+      lieu: locationId,
+      limit: RECENT_SCANS_LIMIT,
+    }),
+    [campaignId, groupId, locationId]
+  );
+  const scanQuerySkip = !campaignId || !groupId || !locationId;
+
+  const {
+    scans: serverScans,
+    totalCount: serverCount,
+    loading: scansLoading,
+    errorMessage: scansErrorMessage,
+    refetch: refetchScans,
+  } = useEnregistrementInventaireList(scanQueryVariables, {
+    skip: scanQuerySkip,
+  });
 
   const { submit, loading, errorMessage, mutationErrors, ok } =
     useCreateEnregistrementInventaire();
@@ -124,27 +218,85 @@ export default function ScanScreen() {
   const hasCameraPermission = cameraPermission?.granted ?? false;
   const canAskCameraPermission = cameraPermission?.canAskAgain ?? true;
   const isScanBusy = isScanLocked || loading;
-  const isCameraButtonDisabled = !hasCameraPermission && !canAskCameraPermission;
+  const isCameraButtonDisabled =
+    !hasCameraPermission && !canAskCameraPermission;
   const cameraButtonLabel = hasCameraPermission
     ? isCameraActive
       ? "Desactiver la camera"
       : "Activer la camera"
     : canAskCameraPermission
-      ? "Autoriser la camera"
-      : "Autorisation bloquee";
+    ? "Autoriser la camera"
+    : "Autorisation bloquee";
   const cameraStatusMessage = hasCameraPermission
     ? isCameraActive
       ? "Visez un code-barres pour scanner."
       : "Activez la camera pour scanner."
     : canAskCameraPermission
-      ? "Autorisez la camera pour scanner."
-      : "Autorisation refusee. Activez-la dans les reglages.";
+    ? "Autorisez la camera pour scanner."
+    : "Autorisation refusee. Activez-la dans les reglages.";
+  const serverScanItems = useMemo(
+    () => serverScans.map(mapScanItemToRecentScan),
+    [serverScans]
+  );
+  const mergedScans = useMemo(
+    () => mergeUniqueScans(localScans, serverScanItems),
+    [localScans, serverScanItems]
+  );
+  const existingCodes = useMemo(() => {
+    const set = new Set<string>();
+    for (const scan of mergedScans) {
+      const normalized = normalizeScanCode(scan.code);
+      if (normalized) {
+        set.add(normalized);
+      }
+    }
+    return set;
+  }, [mergedScans]);
+  const displayedScans = useMemo(
+    () => mergedScans.slice(0, RECENT_SCANS_LIMIT),
+    [mergedScans]
+  );
+  const totalScanCount = useMemo(() => {
+    if (serverCount !== null) {
+      return serverCount + localScans.length;
+    }
+
+    return mergedScans.length;
+  }, [localScans.length, mergedScans.length, serverCount]);
+  const lastScan = mergedScans[0] ?? null;
+  const showScanLoading = scansLoading && displayedScans.length === 0;
 
   useEffect(() => {
     if (!hasCameraPermission) {
       setIsCameraActive(false);
     }
   }, [hasCameraPermission]);
+
+  useEffect(() => {
+    setLocalScans([]);
+    scanLockRef.current = false;
+    lastCameraScanRef.current = null;
+    setIsScanLocked(false);
+  }, [campaignId, groupId, locationId]);
+
+  useEffect(() => {
+    if (localScans.length === 0) {
+      return;
+    }
+
+    const serverKeys = new Set(serverScanItems.map(getScanKey));
+    setLocalScans((current) => {
+      if (current.length === 0) {
+        return current;
+      }
+
+      const filtered = current.filter(
+        (scan) => !serverKeys.has(getScanKey(scan))
+      );
+
+      return filtered.length === current.length ? current : filtered;
+    });
+  }, [localScans, serverScanItems]);
 
   useEffect(() => {
     return () => {
@@ -163,9 +315,7 @@ export default function ScanScreen() {
   /** Trigger a success haptic feedback on supported devices. */
   const triggerSuccessHaptic = useCallback(async () => {
     try {
-      await Haptics.notificationAsync(
-        Haptics.NotificationFeedbackType.Success
-      );
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {
       // Ignore haptic errors on unsupported devices.
     }
@@ -199,10 +349,13 @@ export default function ScanScreen() {
     setIsRefreshing(true);
     try {
       setLocalError(null);
+      if (!scanQuerySkip) {
+        await refetchScans(scanQueryVariables);
+      }
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [refetchScans, scanQuerySkip, scanQueryVariables]);
 
   /** Create the scan record through the API. */
   const submitScan = useCallback(
@@ -217,8 +370,15 @@ export default function ScanScreen() {
       }
 
       const cleanedCode = rawCode.trim();
-      if (!cleanedCode) {
+      const normalizedCode = normalizeScanCode(cleanedCode);
+
+      if (!normalizedCode) {
         setLocalError("Le code article est requis.");
+        return;
+      }
+
+      if (existingCodes.has(normalizedCode)) {
+        setLocalError("Code deja enregistre pour ce lieu.");
         return;
       }
 
@@ -239,12 +399,14 @@ export default function ScanScreen() {
         null;
 
       if (response?.create_enregistrementinventaire?.ok) {
-        setRecentScans((current) => {
-          const next = [buildRecentScan(created, cleanedCode), ...current];
+        const nextScan = buildRecentScan(created, cleanedCode);
+        setLocalScans((current) => {
+          const next = [nextScan, ...current];
           return next.slice(0, RECENT_SCANS_LIMIT);
         });
         setCodeValue("");
         await triggerSuccessHaptic();
+        void refetchScans(scanQueryVariables);
         return;
       }
 
@@ -258,9 +420,12 @@ export default function ScanScreen() {
     },
     [
       campaignId,
+      existingCodes,
       groupId,
       locationId,
       loading,
+      refetchScans,
+      scanQueryVariables,
       submit,
       triggerSuccessHaptic,
     ]
@@ -269,17 +434,29 @@ export default function ScanScreen() {
   /** Handle barcode events from the camera view. */
   const handleBarcodeScanned = useCallback(
     (result: BarcodeScanningResult) => {
-      if (isScanLocked || loading) {
+      if (scanLockRef.current || loading) {
         return;
       }
 
       const scannedCode = result.data?.trim();
-      if (!scannedCode) {
+      const normalizedCode = normalizeScanCode(scannedCode ?? "");
+      if (!normalizedCode) {
         return;
       }
 
+      const now = Date.now();
+      if (
+        lastCameraScanRef.current &&
+        lastCameraScanRef.current.code === normalizedCode &&
+        now - lastCameraScanRef.current.at < CAMERA_SCAN_LOCK_MS
+      ) {
+        return;
+      }
+
+      scanLockRef.current = true;
       setIsScanLocked(true);
       setCodeValue(scannedCode);
+      lastCameraScanRef.current = { code: normalizedCode, at: now };
       void submitScan(scannedCode, "camera");
 
       if (scanCooldownRef.current) {
@@ -287,10 +464,11 @@ export default function ScanScreen() {
       }
 
       scanCooldownRef.current = setTimeout(() => {
+        scanLockRef.current = false;
         setIsScanLocked(false);
       }, CAMERA_SCAN_LOCK_MS);
     },
-    [isScanLocked, loading, submitScan]
+    [loading, submitScan]
   );
 
   /** Create the scan record through the API from the manual input. */
@@ -319,6 +497,11 @@ export default function ScanScreen() {
 
     return null;
   }, [errorMessage, localError, mutationErrors, ok]);
+
+  /** Derived error message for scan list loading. */
+  const listErrorDisplay = useMemo(() => {
+    return scansErrorMessage ?? null;
+  }, [scansErrorMessage]);
 
   /** Provide stable keys for the recent scan list. */
   const keyExtractor = useCallback(
@@ -368,7 +551,7 @@ export default function ScanScreen() {
   return (
     <ThemedView style={styles.container}>
       <FlatList
-        data={recentScans}
+        data={displayedScans}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
         ListHeaderComponent={
@@ -402,6 +585,43 @@ export default function ScanScreen() {
 
             <View
               style={[
+                styles.recapCard,
+                { borderColor, backgroundColor: surfaceColor },
+              ]}
+            >
+              <View style={styles.recapRow}>
+                <ThemedText style={[styles.recapLabel, { color: mutedColor }]}>
+                  Scans enregistres
+                </ThemedText>
+                <ThemedText type="defaultSemiBold">{totalScanCount}</ThemedText>
+              </View>
+              {lastScan ? (
+                <View style={styles.recapRow}>
+                  <ThemedText
+                    style={[styles.recapLabel, { color: mutedColor }]}
+                  >
+                    Dernier scan
+                  </ThemedText>
+                  <View style={styles.recapValueColumn}>
+                    <ThemedText type="defaultSemiBold">
+                      {lastScan.code}
+                    </ThemedText>
+                    <ThemedText
+                      style={[styles.recapMeta, { color: mutedColor }]}
+                    >
+                      {formatTimestamp(lastScan.capturedAt)}
+                    </ThemedText>
+                  </View>
+                </View>
+              ) : (
+                <ThemedText style={[styles.recapEmpty, { color: mutedColor }]}>
+                  Aucun scan enregistre pour l'instant.
+                </ThemedText>
+              )}
+            </View>
+
+            <View
+              style={[
                 styles.cameraCard,
                 { borderColor, backgroundColor: surfaceColor },
               ]}
@@ -417,12 +637,17 @@ export default function ScanScreen() {
                     },
                   ]}
                   onPress={
-                    hasCameraPermission ? handleToggleCamera : handleRequestCamera
+                    hasCameraPermission
+                      ? handleToggleCamera
+                      : handleRequestCamera
                   }
                   disabled={isCameraButtonDisabled}
                 >
                   <ThemedText
-                    style={[styles.cameraButtonText, { color: buttonTextColor }]}
+                    style={[
+                      styles.cameraButtonText,
+                      { color: buttonTextColor },
+                    ]}
                   >
                     {cameraButtonLabel}
                   </ThemedText>
@@ -476,14 +701,16 @@ export default function ScanScreen() {
                 style={[styles.scanButton, { backgroundColor: highlightColor }]}
                 onPress={handleManualSubmit}
                 disabled={loading}
+                accessibilityRole="button"
+                accessibilityLabel="Enregistrer le code article"
               >
                 {loading ? (
-                  <ActivityIndicator color={buttonTextColor} />
+                  <ActivityIndicator color={buttonTextColor} size="small" />
                 ) : (
                   <ThemedText
                     style={[styles.scanButtonText, { color: buttonTextColor }]}
                   >
-                    Enregistrer
+                    &gt;
                   </ThemedText>
                 )}
               </TouchableOpacity>
@@ -502,21 +729,43 @@ export default function ScanScreen() {
               </View>
             ) : null}
 
+            {listErrorDisplay ? (
+              <View style={styles.errorContainer}>
+                <ThemedText style={styles.errorTitle}>
+                  Impossible de charger les scans.
+                </ThemedText>
+                <ThemedText
+                  style={[styles.errorMessage, { color: mutedColor }]}
+                >
+                  {listErrorDisplay}
+                </ThemedText>
+              </View>
+            ) : null}
+
             <View style={styles.sectionHeader}>
               <ThemedText type="subtitle">Derniers scans</ThemedText>
               <ThemedText style={[styles.sectionMeta, { color: mutedColor }]}>
-                {recentScans.length} enregistrement(s)
+                {totalScanCount} enregistrement(s)
               </ThemedText>
             </View>
           </View>
         }
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <ThemedText type="subtitle">Aucun scan enregistre</ThemedText>
-            <ThemedText style={[styles.emptyMessage, { color: mutedColor }]}>
-              Scannez un premier article pour demarrer.
-            </ThemedText>
-          </View>
+          showScanLoading ? (
+            <View style={styles.emptyContainer}>
+              <ActivityIndicator size="large" color={highlightColor} />
+              <ThemedText style={[styles.emptyMessage, { color: mutedColor }]}>
+                Chargement des scans...
+              </ThemedText>
+            </View>
+          ) : (
+            <View style={styles.emptyContainer}>
+              <ThemedText type="subtitle">Aucun scan enregistre</ThemedText>
+              <ThemedText style={[styles.emptyMessage, { color: mutedColor }]}>
+                Scannez un premier article pour demarrer.
+              </ThemedText>
+            </View>
+          )
         }
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
@@ -553,6 +802,31 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 10,
   },
+  recapCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+  },
+  recapRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  recapLabel: {
+    fontSize: 13,
+  },
+  recapValueColumn: {
+    alignItems: "flex-end",
+    gap: 2,
+  },
+  recapMeta: {
+    fontSize: 12,
+  },
+  recapEmpty: {
+    fontSize: 13,
+  },
   cameraHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -576,7 +850,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   cameraPreview: {
-    height: 220,
+    height: 160,
     width: "100%",
   },
   cameraOverlay: {
@@ -609,9 +883,12 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   inputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
   },
   codeInput: {
+    flex: 1,
     borderWidth: 1,
     borderRadius: 12,
     paddingHorizontal: 14,
@@ -619,13 +896,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   scanButton: {
+    width: 48,
+    height: 48,
     borderRadius: 12,
-    paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
   },
   scanButtonText: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: "600",
   },
   errorContainer: {
