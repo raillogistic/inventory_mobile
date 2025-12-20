@@ -21,10 +21,10 @@ export type ApolloProviderWithAuthProps = {
  * Build an Apollo Client instance configured for the auth endpoint.
  */
 function createApolloClient(
-  authUrl: string,
+  apiUrl: string,
   accessToken: string | null
 ): ApolloClient<NormalizedCacheObject> {
-  const httpLink = createHttpLink({ uri: authUrl });
+  const httpLink = createHttpLink({ uri: apiUrl });
 
   const authLink = setContext((_, { headers }) => ({
     headers: {
@@ -45,11 +45,11 @@ function createApolloClient(
 export function ApolloProviderWithAuth({
   children,
 }: ApolloProviderWithAuthProps) {
-  const { authUrl, accessToken } = useAuth();
+  const { apiUrl, accessToken } = useAuth();
 
   const client = useMemo(
-    () => createApolloClient(authUrl, accessToken),
-    [authUrl, accessToken]
+    () => createApolloClient(apiUrl, accessToken),
+    [apiUrl, accessToken]
   );
 
   return <ApolloProvider client={client}>{children}</ApolloProvider>;

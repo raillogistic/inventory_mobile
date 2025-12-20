@@ -1,6 +1,11 @@
 import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react';
 
-import { buildAuthUrl, DEFAULT_AUTH_SERVER_CONFIG, type AuthServerConfig } from '@/lib/auth/auth-config';
+import {
+  buildApiUrl,
+  buildAuthUrl,
+  DEFAULT_AUTH_SERVER_CONFIG,
+  type AuthServerConfig,
+} from '@/lib/auth/auth-config';
 import { getStoredJson, removeStoredItem, setStoredJson } from '@/lib/auth/auth-storage';
 
 /** Token information returned by the backend. */
@@ -49,6 +54,8 @@ export type AuthContextValue = {
   serverConfig: AuthServerConfig;
   /** Computed auth endpoint URL. */
   authUrl: string;
+  /** Computed API endpoint URL. */
+  apiUrl: string;
   /** Persist a new auth session after login. */
   setAuthSession: (session: AuthSession) => Promise<void>;
   /** Clear the auth session and stored tokens. */
@@ -148,6 +155,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const authUrl = useMemo(() => buildAuthUrl(serverConfig), [serverConfig]);
+  const apiUrl = useMemo(() => buildApiUrl(serverConfig), [serverConfig]);
   const accessToken = tokens?.accessToken ?? null;
   const isAuthenticated = Boolean(accessToken);
 
@@ -159,6 +167,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       user,
       serverConfig,
       authUrl,
+      apiUrl,
       setAuthSession,
       clearAuthSession,
       updateServerConfig,
@@ -170,6 +179,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       user,
       serverConfig,
       authUrl,
+      apiUrl,
       setAuthSession,
       clearAuthSession,
       updateServerConfig,

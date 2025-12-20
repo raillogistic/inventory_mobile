@@ -7,30 +7,17 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { gql } from "@apollo/client";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { useAuth } from "@/hooks/use-auth";
 import { useThemeColor } from "@/hooks/use-theme-color";
-import { useMutation } from "@apollo/client/react";
 
-const LOGIN_MUTATION = gql`
-  mutation Login($username: String!, $password: String!) {
-    login(username: $username, password: $password) {
-      ok
+const TOKEN_AUTH_MUTATION = `
+  mutation TokenAuth($username: String!, $password: String!) {
+    token_auth(username: $username, password: $password) {
       token
-      refresh_token
-      expires_at
-      errors
-      user {
-        id
-        username
-        email
-        first_name
-        last_name
-      }
     }
   }
 `;
@@ -43,48 +30,32 @@ type LoginFormState = {
   password: string;
 };
 
-/** Variables required by the login mutation. */
-type LoginMutationVariables = {
+/** Variables required by the token auth mutation. */
+type TokenAuthVariables = {
   /** Username used for authentication. */
   username: string;
   /** Password used for authentication. */
   password: string;
 };
 
-/** User data returned by the login mutation. */
-type LoginMutationUser = {
-  /** User identifier. */
-  id: string;
-  /** Unique username. */
-  username: string;
-  /** Email address. */
-  email: string | null;
-  /** First name. */
-  first_name: string | null;
-  /** Last name. */
-  last_name: string | null;
-};
-
-/** Payload returned by the login mutation. */
-type LoginMutationPayload = {
-  /** Whether the login succeeded. */
-  ok: boolean;
+/** Payload returned by the token auth mutation. */
+type TokenAuthPayload = {
   /** Access token string. */
   token: string | null;
-  /** Refresh token string. */
-  refresh_token: string | null;
-  /** Access token expiration timestamp. */
-  expires_at: string | null;
-  /** Backend validation errors. */
-  errors: string[];
-  /** Authenticated user data. */
-  user: LoginMutationUser | null;
 };
 
-/** Result data returned by the login mutation. */
-type LoginMutationData = {
-  /** Login mutation response wrapper. */
-  login: LoginMutationPayload | null;
+/** Result data returned by the token auth mutation. */
+type TokenAuthData = {
+  /** Token auth response wrapper. */
+  token_auth: TokenAuthPayload | null;
+};
+
+/** GraphQL response shape for token auth requests. */
+type TokenAuthResponse = {
+  /** Response data from the backend. */
+  data?: TokenAuthData;
+  /** GraphQL errors, if any. */
+  errors?: { message: string }[];
 };
 
 /** Result of an auth endpoint reachability check. */
@@ -103,7 +74,35 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "Connexion impossible. Veuillez réessayer.";
+  return "Connexion impossible. Veuillez reessayer.";
+}
+
+/**
+ * Request an auth token from the backend auth endpoint.
+ */
+async function requestTokenAuth(
+  authUrl: string,
+  variables: TokenAuthVariables
+): Promise<TokenAuthPayload> {
+  const response = await fetch(authUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: TOKEN_AUTH_MUTATION, variables }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Le serveur d'authentification a renvoye le statut ${response.status}.`
+    );
+  }
+
+  const payload = (await response.json()) as TokenAuthResponse;
+
+  if (payload.errors?.length) {
+    throw new Error(payload.errors[0].message);
+  }
+
+  return payload.data?.token_auth ?? { token: null };
 }
 
 /**
@@ -125,7 +124,7 @@ async function checkAuthEndpoint(url: string): Promise<EndpointCheckResult> {
       console.warn("Auth endpoint responded with status", response.status, url);
       return {
         ok: false,
-        message: "Le serveur d'authentification ne répond pas.",
+        message: "Le serveur d'authentification ne repond pas.",
       };
     }
 
@@ -134,8 +133,7 @@ async function checkAuthEndpoint(url: string): Promise<EndpointCheckResult> {
     console.warn("Auth endpoint unreachable", url, error);
     return {
       ok: false,
-      message:
-        "Impossible de joindre le serveur. Vérifiez l'hôte et le port.",
+      message: "Impossible de joindre le serveur. Verifiez l'hote et le port.",
     };
   } finally {
     clearTimeout(timeoutId);
@@ -149,18 +147,15 @@ export default function LoginScreen() {
   const { authUrl, serverConfig, setAuthSession, updateServerConfig } =
     useAuth();
   const [formState, setFormState] = useState<LoginFormState>({
-    username: "",
-    password: "",
+    username: "g1",
+    password: "it-2017***",
   });
   const [serverHost, setServerHost] = useState(serverConfig.host);
   const [serverPort, setServerPort] = useState(serverConfig.port);
   const [showServerSettings, setShowServerSettings] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const [loginMutation, { loading }] = useMutation<
-    LoginMutationData,
-    LoginMutationVariables
-  >(LOGIN_MUTATION);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const textColor = useThemeColor({}, "text");
   const tintColor = useThemeColor({}, "tint");
@@ -230,7 +225,7 @@ export default function LoginScreen() {
     setShowServerSettings(false);
   }, [serverConfig, serverHost, serverPort, updateServerConfig]);
 
-  /** Submit the login mutation and persist the auth session. */
+  /** Submit the token auth mutation and persist the auth session. */
   const handleLogin = useCallback(async () => {
     const trimmedUsername = formState.username.trim();
 
@@ -251,48 +246,35 @@ export default function LoginScreen() {
     }
 
     try {
-      const result = await loginMutation({
-        variables: {
-          username: trimmedUsername,
-          password: formState.password,
-        },
+      setIsSubmitting(true);
+      const payload = await requestTokenAuth(authUrl, {
+        username: trimmedUsername,
+        password: formState.password,
       });
 
-      const payload = result.data?.login;
-
-      if (!payload?.ok || !payload.token) {
-        setErrorMessage(
-          payload?.errors?.[0] ?? "Échec de la connexion. Vérifiez vos identifiants."
-        );
+      if (!payload.token) {
+        setErrorMessage("Echec de la connexion. Verifiez vos identifiants.");
         return;
       }
-
-      const user = payload.user
-        ? {
-            id: payload.user.id,
-            username: payload.user.username,
-            email: payload.user.email,
-            firstName: payload.user.first_name,
-            lastName: payload.user.last_name,
-          }
-        : null;
 
       await setAuthSession({
         tokens: {
           accessToken: payload.token,
-          refreshToken: payload.refresh_token,
-          expiresAt: payload.expires_at,
+          refreshToken: null,
+          expiresAt: null,
         },
-        user,
+        user: null,
       });
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsSubmitting(false);
     }
-  }, [formState.password, formState.username, loginMutation, setAuthSession]);
+  }, [authUrl, formState.password, formState.username, setAuthSession]);
 
   const isLoginDisabled = useMemo(
-    () => loading || !formState.username.trim() || !formState.password,
-    [formState.password, formState.username, loading]
+    () => isSubmitting || !formState.username.trim() || !formState.password,
+    [formState.password, formState.username, isSubmitting]
   );
 
   return (
@@ -322,14 +304,16 @@ export default function LoginScreen() {
             ]}
           >
             <View style={styles.serverHeader}>
-              <ThemedText type="subtitle">Serveur d'authentification</ThemedText>
+              <ThemedText type="subtitle">
+                Serveur d'authentification
+              </ThemedText>
               <TouchableOpacity onPress={handleApplyServerSettings}>
                 <ThemedText type="defaultSemiBold">Appliquer</ThemedText>
               </TouchableOpacity>
             </View>
             <View style={styles.serverRow}>
               <View style={styles.serverColumn}>
-                <ThemedText style={styles.serverLabel}>Hôte</ThemedText>
+                <ThemedText style={styles.serverLabel}>Hote</ThemedText>
                 <TextInput
                   style={[styles.input, { borderColor, color: textColor }]}
                   placeholder="localhost"
@@ -402,7 +386,7 @@ export default function LoginScreen() {
               type="defaultSemiBold"
               style={[styles.loginButtonText, { color: buttonTextColor }]}
             >
-              {loading ? "Connexion..." : "Se connecter"}
+              {isSubmitting ? "Connexion..." : "Se connecter"}
             </ThemedText>
           </TouchableOpacity>
         </View>
