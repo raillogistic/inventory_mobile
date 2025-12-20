@@ -76,6 +76,8 @@ export type GroupeComptage = {
 
 /** Variables for the groupecomptages query. */
 export type GroupeComptageListVariables = {
+  /** Optional substring filter for group names. */
+  nameContains?: string | null;
   /** Optional campaign id filter. */
   campagne?: string | null;
   /** Optional user id filter. */
@@ -95,12 +97,14 @@ export type GroupeComptageListData = {
 /** GraphQL query for listing comptage groups. */
 export const GROUPE_COMPTAGE_LIST_QUERY = gql`
   query GroupeComptageList(
+    $nameContains: String
     $campagne: ID
     $utilisateur: ID
     $role: String
     $limit: Int
   ) {
     groupecomptages(
+      nom__icontains: $nameContains
       campagne: $campagne
       utilisateur: $utilisateur
       role: $role

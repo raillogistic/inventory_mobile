@@ -57,6 +57,12 @@ export default function DrawerLayout() {
           title: "Campagnes",
         }}
       />
+      <Drawer.Screen
+        name="groupes"
+        options={{
+          title: "Groupes",
+        }}
+      />
     </Drawer>
   );
 }

@@ -14,19 +14,19 @@ import { ThemedView } from "@/components/themed-view";
 import { useComptageSession } from "@/hooks/use-comptage-session";
 import { useThemeColor } from "@/hooks/use-theme-color";
 import {
-  type CampagneInventaire,
-  type CampagneInventaireListVariables,
+  type GroupeComptage,
+  type GroupeComptageListVariables,
 } from "@/lib/graphql/inventory-operations";
-import { useCampagneInventaireList } from "@/lib/graphql/inventory-hooks";
+import { useGroupeComptageList } from "@/lib/graphql/inventory-hooks";
 
-/** Props for a single campaign list item. */
-type CampagneListItemProps = {
-  /** Campaign data returned by the API. */
-  campaign: CampagneInventaire;
-  /** Whether the campaign is currently selected. */
+/** Props for a comptage group list item. */
+type GroupeListItemProps = {
+  /** Comptage group data returned by the API. */
+  group: GroupeComptage;
+  /** Whether the group is currently selected. */
   isSelected: boolean;
-  /** Callback fired when the user selects the campaign. */
-  onSelect: (campaign: CampagneInventaire) => void;
+  /** Callback fired when the user selects the group. */
+  onSelect: (group: GroupeComptage) => void;
   /** Card border color derived from theme. */
   borderColor: string;
   /** Card background color derived from theme. */
@@ -37,69 +37,24 @@ type CampagneListItemProps = {
   mutedColor: string;
 };
 
-/** Limits the number of campaigns fetched per request. */
-const CAMPAIGN_LIST_LIMIT = 50;
+/** Limits the number of groups fetched per request. */
+const GROUPE_LIST_LIMIT = 50;
 
 /**
- * Format a date string (YYYY-MM-DD) using a French locale.
+ * Render a comptage group card for the selection list.
  */
-function formatDateLabel(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const parts = value.split("-").map((part) => Number(part));
-  if (parts.length !== 3 || parts.some((part) => Number.isNaN(part))) {
-    return value;
-  }
-
-  const [year, month, day] = parts;
-  const date = new Date(year, month - 1, day);
-
-  return new Intl.DateTimeFormat("fr-FR", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(date);
-}
-
-/**
- * Build a readable campaign date range label.
- */
-function buildDateRangeLabel(campaign: CampagneInventaire): string {
-  const startDate = formatDateLabel(campaign.date_debut);
-  const endDate = formatDateLabel(campaign.date_fin);
-
-  if (startDate && endDate) {
-    return `Du ${startDate} au ${endDate}`;
-  }
-
-  if (startDate) {
-    return `Depuis ${startDate}`;
-  }
-
-  if (endDate) {
-    return `Jusqu'au ${endDate}`;
-  }
-
-  return "Dates non precisees";
-}
-
-/**
- * Render a campaign card for the selection list.
- */
-function CampagneListItem({
-  campaign,
+function GroupeListItem({
+  group,
   isSelected,
   onSelect,
   borderColor,
   backgroundColor,
   highlightColor,
   mutedColor,
-}: CampagneListItemProps) {
+}: GroupeListItemProps) {
   const handlePress = useCallback(() => {
-    onSelect(campaign);
-  }, [campaign, onSelect]);
+    onSelect(group);
+  }, [group, onSelect]);
 
   return (
     <TouchableOpacity
@@ -110,13 +65,16 @@ function CampagneListItem({
       ]}
       onPress={handlePress}
       accessibilityRole="button"
-      accessibilityLabel={`Choisir la campagne ${campaign.nom}`}
+      accessibilityLabel={`Choisir le groupe ${group.nom}`}
     >
       <View style={styles.cardHeader}>
         <View style={styles.cardHeaderText}>
-          <ThemedText type="defaultSemiBold">{campaign.nom}</ThemedText>
-          <ThemedText style={[styles.cardCode, { color: mutedColor }]}>
-            Code: {campaign.code_campagne}
+          <ThemedText type="defaultSemiBold">{group.nom}</ThemedText>
+          <ThemedText style={[styles.cardMeta, { color: mutedColor }]}>
+            Appareil: {group.appareil_identifiant}
+          </ThemedText>
+          <ThemedText style={[styles.cardMeta, { color: mutedColor }]}>
+            Utilisateur: {group.utilisateur.username}
           </ThemedText>
         </View>
         {isSelected ? (
@@ -124,84 +82,79 @@ function CampagneListItem({
             style={[styles.selectedBadge, { backgroundColor: highlightColor }]}
           >
             <ThemedText style={styles.selectedBadgeText}>
-              Selectionnee
+              Selectionne
             </ThemedText>
           </View>
         ) : null}
       </View>
-      <ThemedText style={[styles.cardDates, { color: mutedColor }]}>
-        {buildDateRangeLabel(campaign)}
-      </ThemedText>
     </TouchableOpacity>
   );
 }
 
 /**
- * Campaign selection screen for the comptage flow.
+ * Comptage group selection screen.
  */
-export default function CampaignSelectionScreen() {
+export default function GroupSelectionScreen() {
   const router = useRouter();
-  const { session, setCampaign } = useComptageSession();
+  const { session, setCampaign, setGroup } = useComptageSession();
   const [searchText, setSearchText] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const selectedCampaignId = session.campaign?.id ?? null;
 
-  const queryVariables = useMemo<CampagneInventaireListVariables>(
+  const campaignId = session.campaign?.id ?? null;
+  const selectedGroupId = session.group?.id ?? null;
+
+  const queryVariables = useMemo<GroupeComptageListVariables>(
     () => ({
+      campagne: campaignId,
       nameContains: searchText.trim() || null,
-      limit: CAMPAIGN_LIST_LIMIT,
+      limit: GROUPE_LIST_LIMIT,
     }),
-    [searchText]
+    [campaignId, searchText]
   );
 
-  const { campaigns, loading, errorMessage, refetch } =
-    useCampagneInventaireList(queryVariables);
-
-  const borderColor = useThemeColor(
-    { light: "#E2E8F0", dark: "#2B2E35" },
-    "icon"
+  const { groups, loading, errorMessage, refetch } = useGroupeComptageList(
+    queryVariables,
+    { skip: !campaignId }
   );
+
+  const borderColor = useThemeColor({ light: "#E2E8F0", dark: "#2B2E35" }, "icon");
   const surfaceColor = useThemeColor(
     { light: "#FFFFFF", dark: "#1F232B" },
     "background"
   );
-  const highlightColor = useThemeColor(
-    { light: "#2563EB", dark: "#60A5FA" },
-    "tint"
-  );
-  const mutedColor = useThemeColor(
-    { light: "#64748B", dark: "#94A3B8" },
-    "icon"
-  );
+  const highlightColor = useThemeColor({ light: "#2563EB", dark: "#60A5FA" }, "tint");
+  const mutedColor = useThemeColor({ light: "#64748B", dark: "#94A3B8" }, "icon");
   const inputTextColor = useThemeColor({}, "text");
-  const buttonTextColor = useThemeColor(
-    { light: "#FFFFFF", dark: "#0F172A" },
-    "text"
-  );
   const placeholderColor = useThemeColor(
     { light: "#94A3B8", dark: "#6B7280" },
     "icon"
   );
 
-  /** Update the search query used to filter campaigns. */
+  /** Update the search query used to filter groups. */
   const handleSearchChange = useCallback((value: string) => {
     setSearchText(value);
   }, []);
 
-  /** Store the selected campaign in the comptage session. */
-  const handleSelectCampaign = useCallback(
-    (campaign: CampagneInventaire) => {
-      setCampaign(campaign);
+  /** Store the selected group in the comptage session. */
+  const handleSelectGroup = useCallback(
+    (group: GroupeComptage) => {
+      setGroup(group);
     },
-    [setCampaign]
+    [setGroup]
   );
 
-  /** Retry campaign list retrieval after an error. */
+  /** Navigate back to the campaign list and reset the selection. */
+  const handleChangeCampaign = useCallback(() => {
+    setCampaign(null);
+    router.push("/(drawer)");
+  }, [router, setCampaign]);
+
+  /** Retry group list retrieval after an error. */
   const handleRetry = useCallback(() => {
     refetch(queryVariables);
   }, [queryVariables, refetch]);
 
-  /** Refresh the campaign list via pull-to-refresh. */
+  /** Refresh the group list via pull-to-refresh. */
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
@@ -211,22 +164,13 @@ export default function CampaignSelectionScreen() {
     }
   }, [queryVariables, refetch]);
 
-  /** Navigate to the comptage group selection screen. */
-  const handleContinue = useCallback(() => {
-    if (!selectedCampaignId) {
-      return;
-    }
-
-    router.push("/(drawer)/groupes");
-  }, [router, selectedCampaignId]);
-
-  /** Render a single campaign list row. */
+  /** Render a single group list row. */
   const renderItem = useCallback(
-    ({ item }: { item: CampagneInventaire }) => (
-      <CampagneListItem
-        campaign={item}
-        isSelected={item.id === selectedCampaignId}
-        onSelect={handleSelectCampaign}
+    ({ item }: { item: GroupeComptage }) => (
+      <GroupeListItem
+        group={item}
+        isSelected={item.id === selectedGroupId}
+        onSelect={handleSelectGroup}
         borderColor={borderColor}
         backgroundColor={surfaceColor}
         highlightColor={highlightColor}
@@ -235,29 +179,67 @@ export default function CampaignSelectionScreen() {
     ),
     [
       borderColor,
-      handleSelectCampaign,
+      handleSelectGroup,
       highlightColor,
       mutedColor,
-      selectedCampaignId,
+      selectedGroupId,
       surfaceColor,
     ]
   );
 
-  /** Provide stable keys for the campaign list. */
-  const keyExtractor = useCallback((item: CampagneInventaire) => item.id, []);
+  /** Provide stable keys for the group list. */
+  const keyExtractor = useCallback((item: GroupeComptage) => item.id, []);
 
-  const showInitialLoading = loading && campaigns.length === 0 && !isRefreshing;
-  const showInlineError = Boolean(errorMessage && campaigns.length > 0);
+  const showInitialLoading = loading && groups.length === 0 && !isRefreshing;
+  const showInlineError = Boolean(errorMessage && groups.length > 0);
 
-  /** Render the list header with search and selection context. */
+  if (!campaignId) {
+    return (
+      <ThemedView style={styles.container}>
+        <View style={styles.missingContainer}>
+          <ThemedText type="title">Aucune campagne selectionnee</ThemedText>
+          <ThemedText style={[styles.missingText, { color: mutedColor }]}>
+            Retournez a la liste des campagnes pour continuer.
+          </ThemedText>
+          <TouchableOpacity
+            style={[styles.retryButton, { backgroundColor: highlightColor }]}
+            onPress={handleChangeCampaign}
+          >
+            <ThemedText style={styles.retryButtonText}>
+              Voir les campagnes
+            </ThemedText>
+          </TouchableOpacity>
+        </View>
+      </ThemedView>
+    );
+  }
+
+  /** Render the list header with campaign context and search. */
   const renderHeader = useCallback(() => {
     return (
       <View style={styles.headerContainer}>
         <View style={styles.header}>
-          <ThemedText type="title">Campagnes</ThemedText>
+          <ThemedText type="title">Groupes</ThemedText>
           <ThemedText style={[styles.subtitle, { color: mutedColor }]}>
-            Selectionnez une campagne active pour commencer le comptage.
+            Selectionnez votre groupe de comptage.
           </ThemedText>
+        </View>
+
+        <View style={[styles.campaignBanner, { borderColor }]}>
+          <View style={styles.campaignInfo}>
+            <ThemedText type="defaultSemiBold">
+              Campagne: {session.campaign?.nom}
+            </ThemedText>
+            <ThemedText style={[styles.cardMeta, { color: mutedColor }]}>
+              Code: {session.campaign?.code_campagne}
+            </ThemedText>
+          </View>
+          <TouchableOpacity
+            style={[styles.changeButton, { borderColor }]}
+            onPress={handleChangeCampaign}
+          >
+            <ThemedText style={styles.changeButtonText}>Changer</ThemedText>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.searchContainer}>
@@ -270,7 +252,7 @@ export default function CampaignSelectionScreen() {
                 backgroundColor: surfaceColor,
               },
             ]}
-            placeholder="Rechercher une campagne"
+            placeholder="Rechercher un groupe"
             placeholderTextColor={placeholderColor}
             autoCapitalize="none"
             autoCorrect={false}
@@ -279,13 +261,11 @@ export default function CampaignSelectionScreen() {
           />
         </View>
 
-        {selectedCampaignId ? (
+        {selectedGroupId ? (
           <View style={[styles.selectedBanner, { borderColor }]}>
-            <ThemedText type="defaultSemiBold">
-              Campagne selectionnee
-            </ThemedText>
+            <ThemedText type="defaultSemiBold">Groupe selectionne</ThemedText>
             <ThemedText style={{ color: mutedColor }}>
-              {session.campaign?.nom}
+              {session.group?.nom}
             </ThemedText>
           </View>
         ) : null}
@@ -293,7 +273,7 @@ export default function CampaignSelectionScreen() {
         {showInlineError ? (
           <View style={styles.errorContainer}>
             <ThemedText style={styles.errorTitle}>
-              Impossible de charger les campagnes.
+              Impossible de charger les groupes.
             </ThemedText>
             <ThemedText style={[styles.errorMessage, { color: mutedColor }]}>
               {errorMessage}
@@ -311,6 +291,7 @@ export default function CampaignSelectionScreen() {
   }, [
     borderColor,
     errorMessage,
+    handleChangeCampaign,
     handleRetry,
     handleSearchChange,
     highlightColor,
@@ -318,20 +299,22 @@ export default function CampaignSelectionScreen() {
     mutedColor,
     placeholderColor,
     searchText,
-    selectedCampaignId,
+    selectedGroupId,
+    session.campaign?.code_campagne,
     session.campaign?.nom,
+    session.group?.nom,
     showInlineError,
     surfaceColor,
   ]);
 
-  /** Render the empty/loading state for the campaign list. */
+  /** Render the empty/loading state for the group list. */
   const renderEmptyComponent = useCallback(() => {
     if (showInitialLoading) {
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={highlightColor} />
           <ThemedText style={[styles.loadingText, { color: mutedColor }]}>
-            Chargement des campagnes...
+            Chargement des groupes...
           </ThemedText>
         </View>
       );
@@ -341,7 +324,7 @@ export default function CampaignSelectionScreen() {
       return (
         <View style={styles.errorContainer}>
           <ThemedText style={styles.errorTitle}>
-            Impossible de charger les campagnes.
+            Impossible de charger les groupes.
           </ThemedText>
           <ThemedText style={[styles.errorMessage, { color: mutedColor }]}>
             {errorMessage}
@@ -358,7 +341,7 @@ export default function CampaignSelectionScreen() {
 
     return (
       <View style={styles.emptyContainer}>
-        <ThemedText type="subtitle">Aucune campagne trouvee.</ThemedText>
+        <ThemedText type="subtitle">Aucun groupe trouve.</ThemedText>
         <ThemedText style={[styles.emptyMessage, { color: mutedColor }]}>
           Verifiez votre recherche ou contactez l'administrateur.
         </ThemedText>
@@ -372,39 +355,14 @@ export default function CampaignSelectionScreen() {
     showInitialLoading,
   ]);
 
-  /** Render the footer action once a campaign is selected. */
-  const renderFooter = useCallback(() => {
-    if (!selectedCampaignId) {
-      return null;
-    }
-
-    return (
-      <View style={styles.footerContainer}>
-        <TouchableOpacity
-          style={[styles.continueButton, { backgroundColor: highlightColor }]}
-          onPress={handleContinue}
-          accessibilityRole="button"
-          accessibilityLabel="Continuer vers les groupes"
-        >
-          <ThemedText
-            style={[styles.continueButtonText, { color: buttonTextColor }]}
-          >
-            Continuer vers les groupes
-          </ThemedText>
-        </TouchableOpacity>
-      </View>
-    );
-  }, [buttonTextColor, handleContinue, highlightColor, selectedCampaignId]);
-
   return (
     <ThemedView style={styles.container}>
       <FlatList
-        data={campaigns}
+        data={groups}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmptyComponent}
-        ListFooterComponent={renderFooter}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         refreshing={isRefreshing}
@@ -427,6 +385,29 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 14,
+  },
+  campaignBanner: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  campaignInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  changeButton: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  changeButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
   },
   searchContainer: {
     marginBottom: 4,
@@ -493,19 +474,6 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     gap: 12,
   },
-  footerContainer: {
-    marginTop: 12,
-  },
-  continueButton: {
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  continueButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
   card: {
     borderWidth: 1,
     borderRadius: 14,
@@ -522,10 +490,7 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 4,
   },
-  cardCode: {
-    fontSize: 13,
-  },
-  cardDates: {
+  cardMeta: {
     fontSize: 13,
   },
   selectedBadge: {
@@ -537,5 +502,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#FFFFFF",
     fontWeight: "600",
+  },
+  missingContainer: {
+    flex: 1,
+    paddingHorizontal: 24,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 12,
+  },
+  missingText: {
+    fontSize: 14,
+    textAlign: "center",
   },
 });

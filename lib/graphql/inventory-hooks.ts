@@ -166,11 +166,18 @@ export type GroupeComptageListState = {
   ) => Promise<ApolloQueryResult<GroupeComptageListData>>;
 };
 
+/** Options for controlling group list queries. */
+export type GroupeComptageListOptions = {
+  /** Skip the query when prerequisites are missing. */
+  skip?: boolean;
+};
+
 /**
  * Fetch comptage groups for the selected campaign or user.
  */
 export function useGroupeComptageList(
-  variables: GroupeComptageListVariables = {}
+  variables: GroupeComptageListVariables = {},
+  options: GroupeComptageListOptions = {}
 ): GroupeComptageListState {
   const queryVariables: GroupeComptageListVariables = {
     ...variables,
@@ -182,6 +189,7 @@ export function useGroupeComptageList(
     {
       variables: queryVariables,
       fetchPolicy: "cache-and-network",
+      skip: options.skip,
     }
   );
 
