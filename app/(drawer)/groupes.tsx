@@ -1,7 +1,9 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
+  Pressable,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -39,6 +41,95 @@ type GroupeListItemProps = {
 
 /** Limits the number of groups fetched per request. */
 const GROUPE_LIST_LIMIT = 50;
+
+/** Number of digits required for the group PIN. */
+const PIN_LENGTH = 4;
+
+/** Props for the PIN code input UI. */
+type PinCodeInputProps = {
+  /** Current PIN value. */
+  value: string;
+  /** Required PIN length. */
+  length: number;
+  /** Callback for updating the PIN value. */
+  onChange: (value: string) => void;
+  /** Input ref used to focus the hidden TextInput. */
+  inputRef: React.RefObject<TextInput>;
+  /** Default border color for each PIN box. */
+  borderColor: string;
+  /** Highlight color for the active PIN box. */
+  highlightColor: string;
+  /** Dot color for filled PIN boxes. */
+  dotColor: string;
+};
+
+/**
+ * Render a 4-digit PIN input with iOS-style boxes.
+ */
+function PinCodeInput({
+  value,
+  length,
+  onChange,
+  inputRef,
+  borderColor,
+  highlightColor,
+  dotColor,
+}: PinCodeInputProps) {
+  /** Normalize incoming PIN values to digits only. */
+  const handleChangeText = useCallback(
+    (nextValue: string) => {
+      const sanitized = nextValue.replace(/[^0-9]/g, "").slice(0, length);
+      onChange(sanitized);
+    },
+    [length, onChange]
+  );
+
+  /** Focus the hidden input when the row is pressed. */
+  const handleFocusRequest = useCallback(() => {
+    inputRef.current?.focus();
+  }, [inputRef]);
+
+  return (
+    <Pressable
+      style={styles.pinInputContainer}
+      onPress={handleFocusRequest}
+      accessibilityRole="button"
+      accessibilityLabel="Saisir le code PIN"
+    >
+      <TextInput
+        ref={inputRef}
+        value={value}
+        onChangeText={handleChangeText}
+        keyboardType="number-pad"
+        maxLength={length}
+        autoFocus={false}
+        caretHidden
+        style={styles.hiddenPinInput}
+      />
+      <View style={styles.pinBoxRow}>
+        {Array.from({ length }).map((_, index) => {
+          const isFilled = index < value.length;
+          const isActive =
+            value.length < length
+              ? index === value.length
+              : index === length - 1;
+          const boxBorderColor = isActive ? highlightColor : borderColor;
+
+          return (
+            <View
+              key={`pin-box-${index}`}
+              style={[styles.pinBox, { borderColor: boxBorderColor }]}
+            >
+              {isFilled ? (
+                <View style={[styles.pinDot, { backgroundColor: dotColor }]} />
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+    </Pressable>
+  );
+}
 
 /**
  * Render a comptage group card for the selection list.
@@ -99,6 +190,10 @@ export default function GroupSelectionScreen() {
   const { session, setCampaign, setGroup } = useComptageSession();
   const [searchText, setSearchText] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pinPromptGroup, setPinPromptGroup] = useState<GroupeComptage | null>(null);
+  const [pinValue, setPinValue] = useState<string>("");
+  const [pinError, setPinError] = useState<string | null>(null);
+  const pinInputRef = useRef<TextInput>(null);
 
   const campaignId = session.campaign?.id ?? null;
   const selectedGroupId = session.group?.id ?? null;
@@ -125,23 +220,35 @@ export default function GroupSelectionScreen() {
   const highlightColor = useThemeColor({ light: "#2563EB", dark: "#60A5FA" }, "tint");
   const mutedColor = useThemeColor({ light: "#64748B", dark: "#94A3B8" }, "icon");
   const inputTextColor = useThemeColor({}, "text");
+  const buttonTextColor = useThemeColor(
+    { light: "#FFFFFF", dark: "#0F172A" },
+    "text"
+  );
   const placeholderColor = useThemeColor(
     { light: "#94A3B8", dark: "#6B7280" },
     "icon"
   );
+  const modalSurfaceColor = useThemeColor(
+    { light: "#FFFFFF", dark: "#1F232B" },
+    "background"
+  );
+  const modalOverlayColor = useThemeColor(
+    { light: "rgba(15, 23, 42, 0.45)", dark: "rgba(15, 23, 42, 0.7)" },
+    "background"
+  );
+  const pinDotColor = useThemeColor({ light: "#0F172A", dark: "#FFFFFF" }, "text");
 
   /** Update the search query used to filter groups. */
   const handleSearchChange = useCallback((value: string) => {
     setSearchText(value);
   }, []);
 
-  /** Store the selected group in the comptage session. */
-  const handleSelectGroup = useCallback(
-    (group: GroupeComptage) => {
-      setGroup(group);
-    },
-    [setGroup]
-  );
+  /** Open the PIN prompt for the selected group. */
+  const handleSelectGroup = useCallback((group: GroupeComptage) => {
+    setPinPromptGroup(group);
+    setPinValue("");
+    setPinError(null);
+  }, []);
 
   /** Navigate back to the campaign list and reset the selection. */
   const handleChangeCampaign = useCallback(() => {
@@ -163,6 +270,81 @@ export default function GroupSelectionScreen() {
       setIsRefreshing(false);
     }
   }, [queryVariables, refetch]);
+
+  /** Update the PIN input value. */
+  const handlePinChange = useCallback((value: string) => {
+    setPinValue(value.replace(/[^0-9]/g, "").slice(0, PIN_LENGTH));
+    setPinError(null);
+  }, []);
+
+  /** Close the PIN prompt without selecting the group. */
+  const handleClosePinPrompt = useCallback(() => {
+    setPinPromptGroup(null);
+    setPinValue("");
+    setPinError(null);
+  }, []);
+
+  /** Focus the PIN input after opening the modal. */
+  useEffect(() => {
+    if (!pinPromptGroup) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      pinInputRef.current?.focus();
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [pinPromptGroup]);
+
+  /** Validate the PIN and store the selected group. */
+  const handleConfirmPin = useCallback(
+    (enteredPin: string) => {
+      if (!pinPromptGroup) {
+        return;
+      }
+
+      const expectedPin = pinPromptGroup.pin_code?.trim() ?? "";
+
+      if (!expectedPin) {
+        setPinValue("");
+        setPinError("PIN manquant pour ce groupe.");
+        pinInputRef.current?.focus();
+        return;
+      }
+
+      if (enteredPin.length !== PIN_LENGTH) {
+        setPinValue("");
+        setPinError("PIN incomplet.");
+        pinInputRef.current?.focus();
+        return;
+      }
+
+      if (enteredPin !== expectedPin) {
+        setPinValue("");
+        setPinError("PIN invalide. Reessayez.");
+        pinInputRef.current?.focus();
+        return;
+      }
+
+      setGroup(pinPromptGroup);
+      setPinPromptGroup(null);
+      setPinValue("");
+      setPinError(null);
+    },
+    [pinPromptGroup, setGroup, pinInputRef]
+  );
+
+  /** Auto-validate PIN once all digits are entered. */
+  useEffect(() => {
+    if (!pinPromptGroup) {
+      return;
+    }
+
+    if (pinValue.length === PIN_LENGTH) {
+      handleConfirmPin(pinValue);
+    }
+  }, [handleConfirmPin, pinPromptGroup, pinValue]);
 
   /** Render a single group list row. */
   const renderItem = useCallback(
@@ -355,6 +537,30 @@ export default function GroupSelectionScreen() {
     showInitialLoading,
   ]);
 
+  /** Render the footer action once a group is selected. */
+  const renderFooter = useCallback(() => {
+    if (!selectedGroupId) {
+      return null;
+    }
+
+    return (
+      <View style={styles.footerContainer}>
+        <TouchableOpacity
+          style={[styles.continueButton, { backgroundColor: highlightColor }]}
+          onPress={() => router.push("/(drawer)/lieux")}
+          accessibilityRole="button"
+          accessibilityLabel="Continuer vers les lieux"
+        >
+          <ThemedText
+            style={[styles.continueButtonText, { color: buttonTextColor }]}
+          >
+            Continuer vers les lieux
+          </ThemedText>
+        </TouchableOpacity>
+      </View>
+    );
+  }, [buttonTextColor, highlightColor, router, selectedGroupId]);
+
   return (
     <ThemedView style={styles.container}>
       <FlatList
@@ -363,12 +569,51 @@ export default function GroupSelectionScreen() {
         renderItem={renderItem}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmptyComponent}
+        ListFooterComponent={renderFooter}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         refreshing={isRefreshing}
         onRefresh={handleRefresh}
         alwaysBounceVertical
       />
+      <Modal
+        transparent
+        visible={Boolean(pinPromptGroup)}
+        animationType="fade"
+        onRequestClose={handleClosePinPrompt}
+      >
+        <View style={[styles.modalOverlay, { backgroundColor: modalOverlayColor }]}>
+          <View style={[styles.modalCard, { backgroundColor: modalSurfaceColor }]}>
+            <ThemedText type="subtitle">Code PIN</ThemedText>
+            <ThemedText style={[styles.modalSubtitle, { color: mutedColor }]}>
+              Saisissez le PIN a 4 chiffres pour valider le groupe
+              {pinPromptGroup ? ` ${pinPromptGroup.nom}` : ""}.
+            </ThemedText>
+            <PinCodeInput
+              value={pinValue}
+              length={PIN_LENGTH}
+              onChange={handlePinChange}
+              inputRef={pinInputRef}
+              borderColor={borderColor}
+              highlightColor={highlightColor}
+              dotColor={pinDotColor}
+            />
+            {pinError ? (
+              <ThemedText style={[styles.pinErrorText, { color: "#DC2626" }]}>
+                {pinError}
+              </ThemedText>
+            ) : null}
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalButton, { borderColor }]}
+                onPress={handleClosePinPrompt}
+              >
+                <ThemedText style={styles.modalButtonText}>Annuler</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -473,6 +718,79 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 24,
     gap: 12,
+  },
+  footerContainer: {
+    marginTop: 12,
+  },
+  continueButton: {
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  continueButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  modalOverlay: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  modalCard: {
+    width: "100%",
+    borderRadius: 16,
+    padding: 20,
+    gap: 12,
+  },
+  modalSubtitle: {
+    fontSize: 14,
+  },
+  pinInputContainer: {
+    alignItems: "center",
+  },
+  pinBoxRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  pinBox: {
+    width: 48,
+    height: 56,
+    borderWidth: 1,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pinDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+  },
+  hiddenPinInput: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    opacity: 0,
+  },
+  pinErrorText: {
+    fontSize: 13,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 12,
+  },
+  modalButton: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  modalButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   card: {
     borderWidth: 1,

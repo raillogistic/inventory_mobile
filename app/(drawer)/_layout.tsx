@@ -63,6 +63,18 @@ export default function DrawerLayout() {
           title: "Groupes",
         }}
       />
+      <Drawer.Screen
+        name="lieux"
+        options={{
+          title: "Lieux",
+        }}
+      />
+      <Drawer.Screen
+        name="scan"
+        options={{
+          title: "Scan",
+        }}
+      />
     </Drawer>
   );
 }

@@ -218,17 +218,25 @@ export type LocationListState = {
   ) => Promise<ApolloQueryResult<LocationListData>>;
 };
 
+/** Options for controlling location list queries. */
+export type LocationListOptions = {
+  /** Skip the query when prerequisites are missing. */
+  skip?: boolean;
+};
+
 /**
  * Fetch locations for selection or barcode lookup.
  */
 export function useLocationList(
-  variables: LocationListVariables = {}
+  variables: LocationListVariables = {},
+  options: LocationListOptions = {}
 ): LocationListState {
   const result = useQuery<LocationListData, LocationListVariables>(
     LOCATION_LIST_QUERY,
     {
       variables,
       fetchPolicy: "cache-and-network",
+      skip: options.skip,
     }
   );
 

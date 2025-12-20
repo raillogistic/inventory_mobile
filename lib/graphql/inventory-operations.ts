@@ -68,6 +68,8 @@ export type GroupeComptage = {
   nom: string;
   /** Device identifier attached to the group. */
   appareil_identifiant: string;
+  /** PIN code required to validate group selection. */
+  pin_code: string;
   /** Role string for the group (COMPTAGE). */
   role: string;
   /** User assigned to the group. */
@@ -114,6 +116,7 @@ export const GROUPE_COMPTAGE_LIST_QUERY = gql`
       id
       nom
       appareil_identifiant
+      pin_code
       role
       utilisateur {
         id
