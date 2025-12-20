@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -7,7 +7,13 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import {
+  CameraView,
+  type BarcodeScanningResult,
+  useCameraPermissions,
+} from "expo-camera";
 import { useRouter } from "expo-router";
+import * as Haptics from "expo-haptics";
 
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
@@ -18,7 +24,6 @@ import {
   type EnregistrementInventaireResult,
 } from "@/lib/graphql/inventory-operations";
 import { useCreateEnregistrementInventaire } from "@/lib/graphql/inventory-hooks";
-import { Text } from "react-native-gesture-handler";
 
 /** Payload used to render recent scan entries. */
 type RecentScan = {
@@ -30,8 +35,13 @@ type RecentScan = {
   capturedAt: string;
 };
 
+/** Origin source of the scan capture. */
+type ScanSource = "manual" | "camera";
+
 /** Limits the number of recent scans shown. */
 const RECENT_SCANS_LIMIT = 6;
+/** Cooldown used to avoid duplicate camera scans. */
+const CAMERA_SCAN_LOCK_MS = 1500;
 
 /**
  * Format a timestamp for display in French locale.
@@ -74,6 +84,10 @@ export default function ScanScreen() {
   const [localError, setLocalError] = useState<string | null>(null);
   const [recentScans, setRecentScans] = useState<RecentScan[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isScanLocked, setIsScanLocked] = useState(false);
+  const scanCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const campaignId = session.campaign?.id ?? null;
   const groupId = session.group?.id ?? null;
@@ -107,12 +121,72 @@ export default function ScanScreen() {
     { light: "#94A3B8", dark: "#6B7280" },
     "icon"
   );
+  const hasCameraPermission = cameraPermission?.granted ?? false;
+  const canAskCameraPermission = cameraPermission?.canAskAgain ?? true;
+  const isScanBusy = isScanLocked || loading;
+  const isCameraButtonDisabled = !hasCameraPermission && !canAskCameraPermission;
+  const cameraButtonLabel = hasCameraPermission
+    ? isCameraActive
+      ? "Desactiver la camera"
+      : "Activer la camera"
+    : canAskCameraPermission
+      ? "Autoriser la camera"
+      : "Autorisation bloquee";
+  const cameraStatusMessage = hasCameraPermission
+    ? isCameraActive
+      ? "Visez un code-barres pour scanner."
+      : "Activez la camera pour scanner."
+    : canAskCameraPermission
+      ? "Autorisez la camera pour scanner."
+      : "Autorisation refusee. Activez-la dans les reglages.";
+
+  useEffect(() => {
+    if (!hasCameraPermission) {
+      setIsCameraActive(false);
+    }
+  }, [hasCameraPermission]);
+
+  useEffect(() => {
+    return () => {
+      if (scanCooldownRef.current) {
+        clearTimeout(scanCooldownRef.current);
+      }
+    };
+  }, []);
 
   /** Update the scanned code input value. */
   const handleCodeChange = useCallback((value: string) => {
     setCodeValue(value.trim());
     setLocalError(null);
   }, []);
+
+  /** Trigger a success haptic feedback on supported devices. */
+  const triggerSuccessHaptic = useCallback(async () => {
+    try {
+      await Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Success
+      );
+    } catch {
+      // Ignore haptic errors on unsupported devices.
+    }
+  }, []);
+
+  /** Request camera permission and start preview when allowed. */
+  const handleRequestCamera = useCallback(async () => {
+    const response = await requestCameraPermission();
+    if (response.granted) {
+      setIsCameraActive(true);
+    }
+  }, [requestCameraPermission]);
+
+  /** Toggle the camera preview when permission is granted. */
+  const handleToggleCamera = useCallback(() => {
+    if (!hasCameraPermission) {
+      return;
+    }
+
+    setIsCameraActive((previous) => !previous);
+  }, [hasCameraPermission]);
 
   /** Navigate back to location selection and reset the location. */
   const handleChangeLocation = useCallback(() => {
@@ -131,50 +205,98 @@ export default function ScanScreen() {
   }, []);
 
   /** Create the scan record through the API. */
-  const handleSubmit = useCallback(async () => {
-    if (!campaignId || !groupId || !locationId) {
-      setLocalError("Selection incomplete. Retournez aux selections.");
-      return;
-    }
+  const submitScan = useCallback(
+    async (rawCode: string, source: ScanSource) => {
+      if (loading) {
+        return;
+      }
 
-    if (!codeValue.trim()) {
-      setLocalError("Le code article est requis.");
-      return;
-    }
+      if (!campaignId || !groupId || !locationId) {
+        setLocalError("Selection incomplete. Retournez aux selections.");
+        return;
+      }
 
-    setLocalError(null);
+      const cleanedCode = rawCode.trim();
+      if (!cleanedCode) {
+        setLocalError("Le code article est requis.");
+        return;
+      }
 
-    const payload: EnregistrementInventaireInput = {
-      campagne: campaignId,
-      groupe: groupId,
-      lieu: locationId,
-      code_article: codeValue.trim(),
-      capture_le: new Date().toISOString(),
-      source_scan: "manual",
-    };
+      setLocalError(null);
 
-    const response = await submit(payload);
-    const created =
-      response?.create_enregistrementinventaire?.enregistrementinventaire ??
-      null;
+      const payload: EnregistrementInventaireInput = {
+        campagne: campaignId,
+        groupe: groupId,
+        lieu: locationId,
+        code_article: cleanedCode,
+        capture_le: new Date().toISOString(),
+        source_scan: source,
+      };
 
-    if (response?.create_enregistrementinventaire?.ok) {
-      setRecentScans((current) => {
-        const next = [buildRecentScan(created, codeValue), ...current];
-        return next.slice(0, RECENT_SCANS_LIMIT);
-      });
-      setCodeValue("");
-      return;
-    }
+      const response = await submit(payload);
+      const created =
+        response?.create_enregistrementinventaire?.enregistrementinventaire ??
+        null;
 
-    if (response?.create_enregistrementinventaire?.errors?.length) {
-      const error = response.create_enregistrementinventaire.errors[0];
-      setLocalError(`${error.field}: ${error.messages.join(", ")}`);
-      return;
-    }
+      if (response?.create_enregistrementinventaire?.ok) {
+        setRecentScans((current) => {
+          const next = [buildRecentScan(created, cleanedCode), ...current];
+          return next.slice(0, RECENT_SCANS_LIMIT);
+        });
+        setCodeValue("");
+        await triggerSuccessHaptic();
+        return;
+      }
 
-    setLocalError("Le scan n'a pas pu etre enregistre.");
-  }, [campaignId, codeValue, groupId, locationId, submit]);
+      if (response?.create_enregistrementinventaire?.errors?.length) {
+        const error = response.create_enregistrementinventaire.errors[0];
+        setLocalError(`${error.field}: ${error.messages.join(", ")}`);
+        return;
+      }
+
+      setLocalError("Le scan n'a pas pu etre enregistre.");
+    },
+    [
+      campaignId,
+      groupId,
+      locationId,
+      loading,
+      submit,
+      triggerSuccessHaptic,
+    ]
+  );
+
+  /** Handle barcode events from the camera view. */
+  const handleBarcodeScanned = useCallback(
+    (result: BarcodeScanningResult) => {
+      if (isScanLocked || loading) {
+        return;
+      }
+
+      const scannedCode = result.data?.trim();
+      if (!scannedCode) {
+        return;
+      }
+
+      setIsScanLocked(true);
+      setCodeValue(scannedCode);
+      void submitScan(scannedCode, "camera");
+
+      if (scanCooldownRef.current) {
+        clearTimeout(scanCooldownRef.current);
+      }
+
+      scanCooldownRef.current = setTimeout(() => {
+        setIsScanLocked(false);
+      }, CAMERA_SCAN_LOCK_MS);
+    },
+    [isScanLocked, loading, submitScan]
+  );
+
+  /** Create the scan record through the API from the manual input. */
+  const handleManualSubmit = useCallback(async () => {
+    await submitScan(codeValue, "manual");
+  }, [codeValue, submitScan]);
 
   /** Derived error message to display in the UI. */
   const errorDisplay = useMemo(() => {
@@ -278,6 +400,61 @@ export default function ScanScreen() {
               </TouchableOpacity>
             </View>
 
+            <View
+              style={[
+                styles.cameraCard,
+                { borderColor, backgroundColor: surfaceColor },
+              ]}
+            >
+              <View style={styles.cameraHeader}>
+                <ThemedText type="defaultSemiBold">Camera</ThemedText>
+                <TouchableOpacity
+                  style={[
+                    styles.cameraButton,
+                    {
+                      backgroundColor: highlightColor,
+                      opacity: isCameraButtonDisabled ? 0.5 : 1,
+                    },
+                  ]}
+                  onPress={
+                    hasCameraPermission ? handleToggleCamera : handleRequestCamera
+                  }
+                  disabled={isCameraButtonDisabled}
+                >
+                  <ThemedText
+                    style={[styles.cameraButtonText, { color: buttonTextColor }]}
+                  >
+                    {cameraButtonLabel}
+                  </ThemedText>
+                </TouchableOpacity>
+              </View>
+
+              <ThemedText style={[styles.cameraMeta, { color: mutedColor }]}>
+                {cameraStatusMessage}
+              </ThemedText>
+
+              {hasCameraPermission && isCameraActive ? (
+                <View style={styles.cameraPreviewWrapper}>
+                  <CameraView
+                    style={styles.cameraPreview}
+                    onBarcodeScanned={handleBarcodeScanned}
+                  />
+                  {isScanBusy ? (
+                    <View style={styles.cameraOverlay}>
+                      <ThemedText
+                        style={[
+                          styles.cameraOverlayText,
+                          { color: buttonTextColor },
+                        ]}
+                      >
+                        Scan en cours...
+                      </ThemedText>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+
             <View style={styles.inputContainer}>
               <TextInput
                 style={[
@@ -297,7 +474,7 @@ export default function ScanScreen() {
               />
               <TouchableOpacity
                 style={[styles.scanButton, { backgroundColor: highlightColor }]}
-                onPress={handleSubmit}
+                onPress={handleManualSubmit}
                 disabled={loading}
               >
                 {loading ? (
@@ -369,6 +546,52 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     gap: 4,
+  },
+  cameraCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 10,
+  },
+  cameraHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  cameraButton: {
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  cameraButtonText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  cameraMeta: {
+    fontSize: 13,
+  },
+  cameraPreviewWrapper: {
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  cameraPreview: {
+    height: 220,
+    width: "100%",
+  },
+  cameraOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
+  },
+  cameraOverlayText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   contextMeta: {
     fontSize: 13,
