@@ -11,6 +11,7 @@ import { AuthGate } from "@/components/auth/auth-gate";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { AuthProvider } from "@/providers/auth-provider";
 import { ApolloProviderWithAuth } from "@/providers/apollo-provider";
+import { ComptageSessionProvider } from "@/providers/comptage-session-provider";
 
 export const unstable_settings = {
   anchor: "(drawer)",
@@ -24,19 +25,21 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <ApolloProviderWithAuth>
-        <ThemeProvider
-          value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-        >
-          <AuthGate>
-            <Stack>
-              <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-              <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
-            </Stack>
-          </AuthGate>
-          <StatusBar style="auto" />
-        </ThemeProvider>
-      </ApolloProviderWithAuth>
+      <ComptageSessionProvider>
+        <ApolloProviderWithAuth>
+          <ThemeProvider
+            value={colorScheme === "dark" ? DarkTheme : DefaultTheme}
+          >
+            <AuthGate>
+              <Stack>
+                <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+                <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
+              </Stack>
+            </AuthGate>
+            <StatusBar style="auto" />
+          </ThemeProvider>
+        </ApolloProviderWithAuth>
+      </ComptageSessionProvider>
     </AuthProvider>
   );
 }

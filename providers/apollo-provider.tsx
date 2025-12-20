@@ -29,7 +29,7 @@ function createApolloClient(
   const authLink = setContext((_, { headers }) => ({
     headers: {
       ...headers,
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(accessToken ? { Authorization: `JWT ${accessToken}` } : {}),
     },
   }));
 

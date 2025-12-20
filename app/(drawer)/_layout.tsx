@@ -54,7 +54,7 @@ export default function DrawerLayout() {
       <Drawer.Screen
         name="index"
         options={{
-          title: "Home",
+          title: "Campagnes",
         }}
       />
     </Drawer>
