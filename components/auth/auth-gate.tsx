@@ -35,7 +35,7 @@ export function AuthGate({ children }: AuthGateProps) {
     }
 
     if (isAuthenticated && inAuthGroup) {
-      router.replace('/(tabs)');
+      router.replace('/(drawer)');
     }
   }, [isAuthenticated, isReady, router, segments]);
 

@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
 /** In-memory fallback store for unsupported platforms. */
@@ -6,6 +7,11 @@ type MemoryStore = Record<string, string>;
 
 const memoryStore: MemoryStore = {};
 let secureStoreAvailable: boolean | null = null;
+
+/** Check if AsyncStorage can be used on the current platform. */
+function isAsyncStorageAvailable(): boolean {
+  return Platform.OS !== 'web';
+}
 
 /**
  * Check if SecureStore is available on the current platform.
@@ -30,6 +36,10 @@ export async function getStoredItem(key: string): Promise<string | null> {
     return SecureStore.getItemAsync(key);
   }
 
+  if (isAsyncStorageAvailable()) {
+    return AsyncStorage.getItem(key);
+  }
+
   return memoryStore[key] ?? null;
 }
 
@@ -42,6 +52,11 @@ export async function setStoredItem(key: string, value: string): Promise<void> {
     return;
   }
 
+  if (isAsyncStorageAvailable()) {
+    await AsyncStorage.setItem(key, value);
+    return;
+  }
+
   memoryStore[key] = value;
 }
 
@@ -51,6 +66,11 @@ export async function setStoredItem(key: string, value: string): Promise<void> {
 export async function removeStoredItem(key: string): Promise<void> {
   if (await isSecureStoreAvailable()) {
     await SecureStore.deleteItemAsync(key);
+    return;
+  }
+
+  if (isAsyncStorageAvailable()) {
+    await AsyncStorage.removeItem(key);
     return;
   }
 

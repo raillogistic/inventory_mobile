@@ -13,7 +13,7 @@ import { AuthProvider } from "@/providers/auth-provider";
 import { ApolloProviderWithAuth } from "@/providers/apollo-provider";
 
 export const unstable_settings = {
-  anchor: "(tabs)",
+  anchor: "(drawer)",
 };
 
 /**
@@ -31,11 +31,7 @@ export default function RootLayout() {
           <AuthGate>
             <Stack>
               <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-              <Stack.Screen
-                name="modal"
-                options={{ presentation: "modal", title: "Modal" }}
-              />
+              <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
             </Stack>
           </AuthGate>
           <StatusBar style="auto" />
