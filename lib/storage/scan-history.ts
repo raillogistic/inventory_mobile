@@ -27,6 +27,10 @@ export type ScanHistoryItem = {
   locationName: string;
   /** Etat selectionne lors du scan, si applicable. */
   etat: "BIEN" | "MOYENNE" | "HORS_SERVICE" | null;
+  /** Optional observation captured during the scan. */
+  observation: string | null;
+  /** Optional serial number captured during the scan. */
+  serialNumber: string | null;
 };
 
 /**
@@ -40,7 +44,14 @@ export async function getScanHistory(): Promise<ScanHistoryItem[]> {
 
   try {
     const parsed = JSON.parse(rawValue) as ScanHistoryItem[];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.map((item) => ({
+      ...item,
+      observation: item.observation ?? null,
+      serialNumber: item.serialNumber ?? null,
+    }));
   } catch {
     return [];
   }

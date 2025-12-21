@@ -111,6 +111,10 @@ type ScanDetail = {
   capturedAt: string;
   /** Whether this scan was already recorded for the location. */
   alreadyScanned: boolean;
+  /** Optional observation captured for the scan. */
+  observation: string | null;
+  /** Optional serial number captured for the scan. */
+  serialNumber: string | null;
 };
 
 /** Etat option displayed in the scan modal. */
@@ -319,6 +323,8 @@ export default function ScanScreen() {
     useState<ScanFrameLayout | null>(null);
   const [selectedEtat, setSelectedEtat] =
     useState<EnregistrementInventaireEtat | null>(null);
+  const [observationValue, setObservationValue] = useState<string>("");
+  const [serialNumberValue, setSerialNumberValue] = useState<string>("");
   const [scanButtonLayout, setScanButtonLayout] =
     useState<ScanButtonLayout | null>(null);
   const codeInputRef = useRef<TextInput>(null);
@@ -707,6 +713,8 @@ export default function ScanScreen() {
             id: scan.id ?? null,
             code: scan.code_article,
             description: scan.article?.desc ?? null,
+            observation: scan.observation ?? null,
+            serialNumber: scan.serial_number ?? null,
             capturedAt: scan.capture_le ?? new Date().toISOString(),
             hasArticle: Boolean(scan.article),
           };
@@ -719,6 +727,8 @@ export default function ScanScreen() {
             id: scan.id ?? null,
             code: scan.code,
             description: scan.description ?? null,
+            observation: null,
+            serialNumber: null,
             capturedAt: scan.capturedAt,
             hasArticle: scan.hasArticle,
           };
@@ -816,6 +826,8 @@ export default function ScanScreen() {
     setEtatMessage(null);
     setCodeValue("");
     setSelectedEtat(null);
+    setObservationValue("");
+    setSerialNumberValue("");
     if (hasCameraPermission) {
       setIsCameraActive(true);
     }
@@ -854,6 +866,25 @@ export default function ScanScreen() {
     },
     []
   );
+
+  /** Update the observation value. */
+  const handleObservationChange = useCallback((value: string) => {
+    setObservationValue(value);
+  }, []);
+
+  /** Update the serial number value. */
+  const handleSerialNumberChange = useCallback((value: string) => {
+    setSerialNumberValue(value);
+  }, []);
+
+  /** Sync observation and serial number with the current scan detail. */
+  useEffect(() => {
+    if (!scanDetail) {
+      return;
+    }
+    setObservationValue(scanDetail.observation ?? "");
+    setSerialNumberValue(scanDetail.serialNumber ?? "");
+  }, [scanDetail]);
 
   /** Trigger a success haptic feedback on supported devices. */
   const triggerSuccessHaptic = useCallback(async () => {
@@ -972,18 +1003,8 @@ export default function ScanScreen() {
           statusLabel,
           capturedAt: captureTimestamp,
           alreadyScanned: true,
-        });
-        await addScanHistoryItem({
-          id: `${existingScan?.id ?? detailCode}-${captureTimestamp}`,
-          code: detailCode,
-          description: detailDescription,
-          imageUri,
-          status,
-          statusLabel,
-          capturedAt: captureTimestamp,
-          locationId: session.location?.id ?? null,
-          locationName: session.location?.locationname ?? "Lieu inconnu",
-          etat: null,
+          observation: existingScan?.observation ?? null,
+          serialNumber: existingScan?.serialNumber ?? null,
         });
         setIsCameraActive(false);
         setSelectedEtat(null);
@@ -1040,6 +1061,8 @@ export default function ScanScreen() {
           statusLabel,
           capturedAt: nextScan.capturedAt,
           alreadyScanned: false,
+          observation: null,
+          serialNumber: null,
         });
         setIsCameraActive(false);
         setSelectedEtat(null);
@@ -1271,59 +1294,54 @@ export default function ScanScreen() {
       return;
     }
 
-    if (scanDetail.status === "missing") {
-      const historyItem: ScanHistoryItem = {
-        id: `${scanDetail.id}-${scanDetail.capturedAt}`,
-        code: scanDetail.code,
-        description: scanDetail.description,
-        imageUri: scanDetail.imageUri,
-        status: scanDetail.status,
-        statusLabel: scanDetail.statusLabel,
-        capturedAt: scanDetail.capturedAt,
-        locationId: session.location?.id ?? null,
-        locationName: session.location?.locationname ?? "Lieu inconnu",
-        etat: null,
-      };
-      await addScanHistoryItem(historyItem);
-      handleCloseScanModal();
+    const trimmedObservation = observationValue.trim();
+    const trimmedSerialNumber = serialNumberValue.trim();
+    const hasObservation = trimmedObservation.length > 0;
+    const hasSerialNumber = trimmedSerialNumber.length > 0;
+    const shouldUpdate =
+      Boolean(selectedEtat) || hasObservation || hasSerialNumber;
+
+    if (!selectedEtat && scanDetail.status !== "missing" && !shouldUpdate) {
+      setEtatMessage("Choisissez un etat ou ajoutez une observation.");
       return;
     }
 
-    if (!selectedEtat) {
-      setEtatMessage("Choisissez un etat avant de continuer.");
-      return;
+    if (shouldUpdate) {
+      const response = await submitEtat({
+        id: scanDetail.id,
+        etat: selectedEtat ?? null,
+        observation: hasObservation ? trimmedObservation : null,
+        serial_number: hasSerialNumber ? trimmedSerialNumber : null,
+      });
+
+      if (response?.update_enregistrementinventaire?.errors?.length) {
+        const error = response.update_enregistrementinventaire.errors[0];
+        setEtatMessage(`${error.field}: ${error.messages.join(", ")}`);
+        return;
+      }
+
+      if (!response?.update_enregistrementinventaire?.ok) {
+        setEtatMessage("Les informations n'ont pas pu etre enregistrees.");
+        return;
+      }
     }
 
-    setEtatMessage(null);
-    const response = await submitEtat({
-      id: scanDetail.id,
-      etat: selectedEtat,
-    });
-    if (response?.update_enregistrementinventaire?.ok) {
-      const historyItem: ScanHistoryItem = {
-        id: `${scanDetail.id}-${scanDetail.capturedAt}`,
-        code: scanDetail.code,
-        description: scanDetail.description,
-        imageUri: scanDetail.imageUri,
-        status: scanDetail.status,
-        statusLabel: scanDetail.statusLabel,
-        capturedAt: scanDetail.capturedAt,
-        locationId: session.location?.id ?? null,
-        locationName: session.location?.locationname ?? "Lieu inconnu",
-        etat: selectedEtat,
-      };
-      await addScanHistoryItem(historyItem);
-      handleCloseScanModal();
-      return;
-    }
-
-    if (response?.update_enregistrementinventaire?.errors?.length) {
-      const error = response.update_enregistrementinventaire.errors[0];
-      setEtatMessage(`${error.field}: ${error.messages.join(", ")}`);
-      return;
-    }
-
-    setEtatMessage("L'etat n'a pas pu etre enregistre.");
+    const historyItem: ScanHistoryItem = {
+      id: `${scanDetail.id}-${scanDetail.capturedAt}`,
+      code: scanDetail.code,
+      description: scanDetail.description,
+      imageUri: scanDetail.imageUri,
+      status: scanDetail.status,
+      statusLabel: scanDetail.statusLabel,
+      capturedAt: scanDetail.capturedAt,
+      locationId: session.location?.id ?? null,
+      locationName: session.location?.locationname ?? "Lieu inconnu",
+      etat: selectedEtat ?? null,
+      observation: hasObservation ? trimmedObservation : null,
+      serialNumber: hasSerialNumber ? trimmedSerialNumber : null,
+    };
+    await addScanHistoryItem(historyItem);
+    handleCloseScanModal();
   }, [
     handleCloseScanModal,
     scanDetail?.capturedAt,
@@ -1333,6 +1351,8 @@ export default function ScanScreen() {
     scanDetail?.imageUri,
     scanDetail?.status,
     scanDetail?.statusLabel,
+    observationValue,
+    serialNumberValue,
     selectedEtat,
     session.location?.id,
     session.location?.locationname,
@@ -1771,6 +1791,38 @@ export default function ScanScreen() {
                     Deja scanne. Vous pouvez modifier l'etat ci-dessous.
                   </ThemedText>
                 ) : null}
+                <View style={styles.modalField}>
+                  <ThemedText style={[styles.modalFieldLabel, { color: mutedColor }]}>
+                    Observation
+                  </ThemedText>
+                  <TextInput
+                    style={[
+                      styles.modalInput,
+                      { borderColor, color: inputTextColor, backgroundColor: surfaceColor },
+                    ]}
+                    placeholder="Ajouter une observation"
+                    placeholderTextColor={placeholderColor}
+                    value={observationValue}
+                    onChangeText={handleObservationChange}
+                    multiline
+                  />
+                </View>
+                <View style={styles.modalField}>
+                  <ThemedText style={[styles.modalFieldLabel, { color: mutedColor }]}>
+                    Numero de serie (optionnel)
+                  </ThemedText>
+                  <TextInput
+                    style={[
+                      styles.modalInput,
+                      { borderColor, color: inputTextColor, backgroundColor: surfaceColor },
+                    ]}
+                    placeholder="Saisir un numero de serie"
+                    placeholderTextColor={placeholderColor}
+                    value={serialNumberValue}
+                    onChangeText={handleSerialNumberChange}
+                    autoCapitalize="characters"
+                  />
+                </View>
                 {scanDetail.status === "missing" ? null : (
                   <View style={styles.etatSection}>
                     <ThemedText type="subtitle">Etat du materiel</ThemedText>
@@ -2211,6 +2263,21 @@ const styles = StyleSheet.create({
   alreadyScannedText: {
     fontSize: 13,
     textAlign: "center",
+  },
+  modalField: {
+    width: "100%",
+    gap: 6,
+  },
+  modalFieldLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
   },
   modalButton: {
     borderRadius: 12,

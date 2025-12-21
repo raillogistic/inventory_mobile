@@ -194,6 +194,16 @@ export default function HistoryScreen() {
                 <ThemedText style={{ color: mutedColor }}>
                   {selectedItem.description ?? "Description inconnue"}
                 </ThemedText>
+                {selectedItem.serialNumber ? (
+                  <ThemedText style={{ color: mutedColor }}>
+                    Numero de serie: {selectedItem.serialNumber}
+                  </ThemedText>
+                ) : null}
+                {selectedItem.observation ? (
+                  <ThemedText style={{ color: mutedColor }}>
+                    Observation: {selectedItem.observation}
+                  </ThemedText>
+                ) : null}
                 <ThemedText style={{ color: mutedColor }}>
                   {formatTimestamp(selectedItem.capturedAt)}
                 </ThemedText>

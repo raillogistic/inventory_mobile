@@ -442,6 +442,10 @@ export type EnregistrementInventaireListItem = {
   lieu: EnregistrementInventaireLocation;
   /** Group responsible for the scan. */
   groupe: EnregistrementInventaireGroup;
+  /** Optional observation provided during scanning. */
+  observation: string | null;
+  /** Optional serial number captured during scanning. */
+  serial_number: string | null;
   /** Etat du materiel lors du scan. */
   etat: EnregistrementInventaireEtat | null;
   /** Capture timestamp. */
@@ -497,6 +501,8 @@ export const ENREGISTREMENT_INVENTAIRE_LIST_QUERY = gql`
         id
         nom
       }
+      observation
+      serial_number
       etat
       capture_le
     }
@@ -530,6 +536,10 @@ export type EnregistrementInventaireInput = {
   donnees_capture?: string | null;
   /** Optional operator comment. */
   commentaire?: string | null;
+  /** Optional observation for the scan. */
+  observation?: string | null;
+  /** Optional serial number captured during scanning. */
+  serial_number?: string | null;
   /** Etat du materiel lors du scan. */
   etat?: EnregistrementInventaireEtat | null;
 };
@@ -556,6 +566,10 @@ export type EnregistrementInventaireResult = {
   code_article: string;
   /** Article details resolved for the scanned code, when available. */
   article: EnregistrementInventaireArticle | null;
+  /** Optional observation for the scan. */
+  observation: string | null;
+  /** Optional serial number captured during scanning. */
+  serial_number: string | null;
   /** Etat du materiel lors du scan. */
   etat: EnregistrementInventaireEtat | null;
   /** Capture timestamp. */
@@ -593,6 +607,8 @@ export const CREATE_ENREGISTREMENT_INVENTAIRE_MUTATION = gql`
           id
           desc
         }
+        observation
+        serial_number
         etat
         capture_le
       }
@@ -605,7 +621,11 @@ export type UpdateEnregistrementInventaireInput = {
   /** Unique identifier for the scan record. */
   id: string;
   /** Etat du materiel selectionne apres scan. */
-  etat: EnregistrementInventaireEtat;
+  etat?: EnregistrementInventaireEtat | null;
+  /** Optional observation for the scan. */
+  observation?: string | null;
+  /** Optional serial number captured during scanning. */
+  serial_number?: string | null;
 };
 
 /** Variables for the update_enregistrementinventaire mutation. */
@@ -645,6 +665,8 @@ export const UPDATE_ENREGISTREMENT_INVENTAIRE_MUTATION = gql`
           id
           desc
         }
+        observation
+        serial_number
         etat
         capture_le
       }
