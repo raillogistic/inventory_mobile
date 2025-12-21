@@ -1,7 +1,10 @@
 import React, { useMemo } from "react";
 import { useLocalSearchParams } from "expo-router";
 
-import { LocationLevelScreen } from "@/app/(drawer)/lieux/_location-level";
+import {
+  LocationLevelScreen,
+  type LocationTrailItem,
+} from "@/app/(drawer)/lieux/_location-level";
 import type { Location } from "@/lib/graphql/inventory-operations";
 
 /** Params passed to the child location route. */
@@ -10,6 +13,7 @@ type LocationParams = {
   parentName?: string;
   parentDesc?: string;
   parentBarcode?: string;
+  parentTrail?: string;
 };
 
 /**
@@ -31,5 +35,22 @@ export default function LocationSelectionChild() {
     };
   }, [params.parentBarcode, params.parentDesc, params.parentId, params.parentName]);
 
-  return <LocationLevelScreen parentLocation={parentLocation} />;
+  const parentTrail = useMemo<LocationTrailItem[]>(() => {
+    if (!params.parentTrail) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(params.parentTrail) as LocationTrailItem[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }, [params.parentTrail]);
+
+  return (
+    <LocationLevelScreen
+      parentLocation={parentLocation}
+      parentTrail={parentTrail}
+    />
+  );
 }

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  BackHandler,
   FlatList,
   Modal,
   Pressable,
@@ -10,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
@@ -240,17 +242,51 @@ export default function GroupSelectionScreen() {
   }, []);
 
   /** Open the PIN prompt for the selected group. */
-  const handleSelectGroup = useCallback((group: GroupeComptage) => {
-    setPinPromptGroup(group);
-    setPinValue("");
-    setPinError(null);
-  }, []);
+  const handleSelectGroup = useCallback(
+    (group: GroupeComptage) => {
+      if (group.id === selectedGroupId) {
+        router.push("/(drawer)/lieux");
+        return;
+      }
+
+      setPinPromptGroup(group);
+      setPinValue("");
+      setPinError(null);
+    },
+    [router, selectedGroupId]
+  );
 
   /** Navigate back to the campaign list and reset the selection. */
   const handleChangeCampaign = useCallback(() => {
     setCampaign(null);
     router.push("/(drawer)");
   }, [router, setCampaign]);
+
+  /** Handle Android back press by returning to locations when possible. */
+  const handleHardwareBack = useCallback(() => {
+    if (campaignId && selectedGroupId) {
+      router.replace("/(drawer)/lieux");
+      return true;
+    }
+
+    return false;
+  }, [campaignId, selectedGroupId, router]);
+
+  /** Ensure Android back button respects the active comptage selection. */
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener(
+        "hardwareBackPress",
+        handleHardwareBack
+      );
+      return () => subscription.remove();
+    }, [handleHardwareBack])
+  );
+
+  /** Continue to the location selection when a group is already selected. */
+  const handleContinueToLocations = useCallback(() => {
+    router.push("/(drawer)/lieux");
+  }, [router]);
 
   /** Retry group list retrieval after an error. */
   const handleRetry = useCallback(() => {
@@ -421,10 +457,24 @@ export default function GroupSelectionScreen() {
 
         {selectedGroupId ? (
           <View style={[styles.selectedBanner, { borderColor }]}>
-            <ThemedText type="defaultSemiBold">Groupe selectionne</ThemedText>
-            <ThemedText style={{ color: mutedColor }}>
-              {session.group?.nom}
-            </ThemedText>
+            <View style={styles.selectedBannerRow}>
+              <View style={styles.selectedBannerInfo}>
+                <ThemedText type="defaultSemiBold">Groupe selectionne</ThemedText>
+                <ThemedText style={{ color: mutedColor }}>
+                  {session.group?.nom}
+                </ThemedText>
+              </View>
+              <TouchableOpacity
+                style={[styles.continueButton, { borderColor }]}
+                onPress={handleContinueToLocations}
+                accessibilityRole="button"
+                accessibilityLabel="Continuer vers les lieux"
+              >
+                <ThemedText style={styles.continueButtonText}>
+                  Continuer vers les lieux
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
           </View>
         ) : null}
 
@@ -450,6 +500,7 @@ export default function GroupSelectionScreen() {
     borderColor,
     errorMessage,
     handleChangeCampaign,
+    handleContinueToLocations,
     handleRetry,
     handleSearchChange,
     highlightColor,
@@ -641,6 +692,26 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     gap: 4,
+  },
+  selectedBannerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  selectedBannerInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  continueButton: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  continueButtonText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   loadingContainer: {
     alignItems: "center",

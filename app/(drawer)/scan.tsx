@@ -8,8 +8,10 @@ import React, {
 import {
   ActivityIndicator,
   Animated,
+  BackHandler,
   FlatList,
   Modal,
+  Pressable,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -22,6 +24,7 @@ import {
   useCameraPermissions,
 } from "expo-camera";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 
 import { ThemedText } from "@/components/themed-text";
@@ -106,6 +109,8 @@ type ScanDetail = {
   statusLabel: string;
   /** Scan timestamp used for the modal subtitle. */
   capturedAt: string;
+  /** Whether this scan was already recorded for the location. */
+  alreadyScanned: boolean;
 };
 
 /** Etat option displayed in the scan modal. */
@@ -324,6 +329,28 @@ export default function ScanScreen() {
   const campaignId = session.campaign?.id ?? null;
   const groupId = session.group?.id ?? null;
   const locationId = session.location?.id ?? null;
+  const shouldReturnToLocations = Boolean(campaignId && groupId);
+
+  /** Handle Android back press by returning to locations. */
+  const handleHardwareBack = useCallback(() => {
+    if (shouldReturnToLocations) {
+      router.replace("/(drawer)/lieux");
+      return true;
+    }
+
+    return false;
+  }, [router, shouldReturnToLocations]);
+
+  /** Ensure Android back button returns to locations for active sessions. */
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener(
+        "hardwareBackPress",
+        handleHardwareBack
+      );
+      return () => subscription.remove();
+    }, [handleHardwareBack])
+  );
   const scanQueryVariables = useMemo<EnregistrementInventaireListVariables>(
     () => ({
       campagne: campaignId,
@@ -670,6 +697,38 @@ export default function ScanScreen() {
     [scanBorderAnim]
   );
   const scanLineHeight = 6;
+
+  /** Find the latest scan detail for a code already scanned. */
+  const findExistingScan = useCallback(
+    (normalizedCode: string) => {
+      for (const scan of serverScans) {
+        if (normalizeScanCode(scan.code_article) === normalizedCode) {
+          return {
+            id: scan.id ?? null,
+            code: scan.code_article,
+            description: scan.article?.desc ?? null,
+            capturedAt: scan.capture_le ?? new Date().toISOString(),
+            hasArticle: Boolean(scan.article),
+          };
+        }
+      }
+
+      for (const scan of resolvedScans) {
+        if (normalizeScanCode(scan.code) === normalizedCode) {
+          return {
+            id: scan.id ?? null,
+            code: scan.code,
+            description: scan.description ?? null,
+            capturedAt: scan.capturedAt,
+            hasArticle: scan.hasArticle,
+          };
+        }
+      }
+
+      return null;
+    },
+    [resolvedScans, serverScans]
+  );
   const scanLineTranslateY = useMemo(() => {
     const height = scanButtonLayout?.height ?? 0;
     const maxY = Math.max(0, height - scanLineHeight);
@@ -882,8 +941,55 @@ export default function ScanScreen() {
       }
 
       if (existingCodes.has(normalizedCode)) {
+        const existingScan = findExistingScan(normalizedCode);
+        const captureTimestamp = new Date().toISOString();
+        const lookup = normalizedCode
+          ? articleLookup.get(normalizedCode)
+          : null;
+        const isInLocation = normalizedCode
+          ? locationArticleCodeSet.has(normalizedCode)
+          : false;
+        const hasKnownArticle =
+          Boolean(existingScan?.hasArticle) || Boolean(lookup);
+        const status: LocationArticleStatus = isInLocation
+          ? "scanned"
+          : hasKnownArticle
+          ? "other"
+          : "missing";
+        const statusLabel = getStatusLabel(status);
+        const detailCode = existingScan?.code ?? cleanedCode;
+        const detailDescription =
+          existingScan?.description ?? lookup?.desc ?? null;
+
         setLocalError(null);
         setInfoMessage("Code deja scanne pour ce lieu.");
+        setScanDetail({
+          id: existingScan?.id ?? null,
+          code: detailCode,
+          description: detailDescription,
+          imageUri,
+          status,
+          statusLabel,
+          capturedAt: captureTimestamp,
+          alreadyScanned: true,
+        });
+        await addScanHistoryItem({
+          id: `${existingScan?.id ?? detailCode}-${captureTimestamp}`,
+          code: detailCode,
+          description: detailDescription,
+          imageUri,
+          status,
+          statusLabel,
+          capturedAt: captureTimestamp,
+          locationId: session.location?.id ?? null,
+          locationName: session.location?.locationname ?? "Lieu inconnu",
+          etat: null,
+        });
+        setIsCameraActive(false);
+        setSelectedEtat(null);
+        setEtatMessage(null);
+        setCodeValue("");
+        await triggerSuccessHaptic();
         return;
       }
 
@@ -933,6 +1039,7 @@ export default function ScanScreen() {
           status,
           statusLabel,
           capturedAt: nextScan.capturedAt,
+          alreadyScanned: false,
         });
         setIsCameraActive(false);
         setSelectedEtat(null);
@@ -955,11 +1062,14 @@ export default function ScanScreen() {
       articleLookup,
       campaignId,
       existingCodes,
+      findExistingScan,
       groupId,
       isScanModalVisible,
       locationArticleCodeSet,
       locationId,
       loading,
+      session.location?.id,
+      session.location?.locationname,
       refetchScans,
       scanQueryVariables,
       submit,
@@ -997,8 +1107,8 @@ export default function ScanScreen() {
         const imageUri = await captureScanImage();
         await submitScan(scannedCode, "camera", imageUri);
         scanLockRef.current = false;
-        setIsScanLocked(false);
-      })();
+      setIsScanLocked(false);
+    })();
     },
     [
       captureScanImage,
@@ -1266,12 +1376,6 @@ export default function ScanScreen() {
                     shadowColor: scanGlowColor,
                   },
                 ]}
-                onLayout={({ nativeEvent }) =>
-                  setScanButtonLayout({
-                    width: nativeEvent.layout.width,
-                    height: nativeEvent.layout.height,
-                  })
-                }
               >
                 <Animated.View
                   pointerEvents="none"
@@ -1292,6 +1396,12 @@ export default function ScanScreen() {
                     styles.scanModeButtonInner,
                     { backgroundColor: "transparent" },
                   ]}
+                  onLayout={({ nativeEvent }) =>
+                    setScanButtonLayout({
+                      width: nativeEvent.layout.width,
+                      height: nativeEvent.layout.height,
+                    })
+                  }
                   onPress={
                     hasCameraPermission
                       ? handleToggleCamera
@@ -1571,13 +1681,14 @@ export default function ScanScreen() {
         transparent
         visible={isScanModalVisible}
         animationType="fade"
-        onRequestClose={handleConfirmEtat}
+        onRequestClose={handleCloseScanModal}
       >
-        <View
+        <Pressable
           style={[styles.modalOverlay, { backgroundColor: modalOverlayColor }]}
+          onPress={handleCloseScanModal}
         >
           {scanDetail ? (
-            <View
+            <Pressable
               style={[
                 styles.modalCard,
                 {
@@ -1592,7 +1703,16 @@ export default function ScanScreen() {
                       : borderColor,
                 },
               ]}
+              onPress={() => {}}
             >
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={handleCloseScanModal}
+                accessibilityRole="button"
+                accessibilityLabel="Fermer la fiche article"
+              >
+                <IconSymbol name="xmark" size={16} color={mutedColor} />
+              </TouchableOpacity>
               <View style={styles.modalContent}>
                 <View
                   style={[
@@ -1644,6 +1764,13 @@ export default function ScanScreen() {
                 <ThemedText style={[styles.modalMeta, { color: mutedColor }]}>
                   Scanne a {formatTimestamp(scanDetail.capturedAt)}
                 </ThemedText>
+                {scanDetail.alreadyScanned ? (
+                  <ThemedText
+                    style={[styles.alreadyScannedText, { color: mutedColor }]}
+                  >
+                    Deja scanne. Vous pouvez modifier l'etat ci-dessous.
+                  </ThemedText>
+                ) : null}
                 {scanDetail.status === "missing" ? null : (
                   <View style={styles.etatSection}>
                     <ThemedText type="subtitle">Etat du materiel</ThemedText>
@@ -1709,15 +1836,15 @@ export default function ScanScreen() {
               >
                 {etatLoading ? (
                   <ActivityIndicator color={buttonTextColor} size="small" />
-                ) : (
-                  <ThemedText style={styles.modalButtonText}>
-                    Scanner suivant
-                  </ThemedText>
-                )}
+                  ) : (
+                    <ThemedText style={styles.modalButtonText}>
+                      Scanner suivant
+                    </ThemedText>
+                  )}
               </TouchableOpacity>
-            </View>
+            </Pressable>
           ) : null}
-        </View>
+        </Pressable>
       </Modal>
     </ThemedView>
   );
@@ -1824,6 +1951,7 @@ const styles = StyleSheet.create({
   },
   scanModeScanLine: {
     position: "absolute",
+    top: 0,
     left: 14,
     right: 14,
     height: 6,
@@ -2046,6 +2174,16 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 16,
   },
+  modalCloseButton: {
+    position: "absolute",
+    top: 14,
+    right: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   modalContent: {
     alignItems: "center",
     gap: 12,
@@ -2068,6 +2206,10 @@ const styles = StyleSheet.create({
   },
   modalMeta: {
     fontSize: 14,
+    textAlign: "center",
+  },
+  alreadyScannedText: {
+    fontSize: 13,
     textAlign: "center",
   },
   modalButton: {

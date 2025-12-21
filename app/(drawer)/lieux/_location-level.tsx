@@ -11,6 +11,7 @@ import { useRouter } from "expo-router";
 
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
+import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useComptageSession } from "@/hooks/use-comptage-session";
 import { useThemeColor } from "@/hooks/use-theme-color";
 import {
@@ -92,15 +93,165 @@ function LocationListItem({
 }
 
 /** Props for the location level screen. */
+export type LocationTrailItem = {
+  /** Unique identifier for the location. */
+  id: string;
+  /** Display name for the location. */
+  locationname: string;
+  /** Optional description. */
+  desc: string | null;
+  /** Optional barcode. */
+  barcode: string | null;
+};
+
 export type LocationLevelScreenProps = {
   /** Parent location for this level, if any. */
   parentLocation: Location | null;
+  /** Trail of parent locations leading to this level. */
+  parentTrail: LocationTrailItem[];
 };
+
+/** Props for the location list header. */
+type LocationHeaderProps = {
+  /** Selected group label. */
+  groupName: string | null | undefined;
+  /** Selected device label. */
+  deviceName: string | null | undefined;
+  /** Current parent location. */
+  parentLocation: Location | null;
+  /** Current search text value. */
+  searchText: string;
+  /** Current barcode text value. */
+  barcodeText: string;
+  /** Called when the search text changes. */
+  onSearchChange: (value: string) => void;
+  /** Called when the barcode text changes. */
+  onBarcodeChange: (value: string) => void;
+  /** Called when the user wants to go back. */
+  onBack: () => void;
+  /** Called when the user wants to change group. */
+  onChangeGroup: () => void;
+  /** Border color for cards. */
+  borderColor: string;
+  /** Surface background color. */
+  surfaceColor: string;
+  /** Muted text color. */
+  mutedColor: string;
+  /** Input text color. */
+  inputTextColor: string;
+  /** Placeholder text color. */
+  placeholderColor: string;
+  /** Regular text color. */
+  textColor: string;
+};
+
+/**
+ * Header for the location list with search and group context.
+ */
+const LocationHeader = React.memo(function LocationHeader({
+  groupName,
+  deviceName,
+  parentLocation,
+  searchText,
+  barcodeText,
+  onSearchChange,
+  onBarcodeChange,
+  onBack,
+  onChangeGroup,
+  borderColor,
+  surfaceColor,
+  mutedColor,
+  inputTextColor,
+  placeholderColor,
+  textColor,
+}: LocationHeaderProps) {
+  return (
+    <View style={styles.headerContainer}>
+      <View style={styles.header}>
+        <View style={styles.headerRow}>
+          {parentLocation ? (
+            <TouchableOpacity
+              style={[styles.backButton, { borderColor }]}
+              onPress={onBack}
+            >
+              <IconSymbol name="chevron.left" size={16} color={textColor} />
+              <ThemedText style={styles.backButtonText}>Retour</ThemedText>
+            </TouchableOpacity>
+          ) : null}
+          <ThemedText type="title">
+            {parentLocation ? `Sous-lieux` : "Lieux"}
+          </ThemedText>
+        </View>
+        <ThemedText style={[styles.subtitle, { color: mutedColor }]}>
+          {parentLocation
+            ? `Selectionnez un sous-lieu de ${parentLocation.locationname}.`
+            : "Selectionnez le lieu de comptage."}
+        </ThemedText>
+      </View>
+
+      <View style={styles.groupBanner}>
+        <View style={styles.groupInfo}>
+          <ThemedText type="defaultSemiBold">Groupe: {groupName}</ThemedText>
+          <ThemedText style={[styles.cardMeta, { color: mutedColor }]}>
+            Appareil: {deviceName}
+          </ThemedText>
+        </View>
+        <TouchableOpacity
+          style={[styles.changeButton, { borderColor }]}
+          onPress={onChangeGroup}
+        >
+          <ThemedText style={styles.changeButtonText}>Changer</ThemedText>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={[
+            styles.searchInput,
+            {
+              borderColor,
+              color: inputTextColor,
+              backgroundColor: surfaceColor,
+            },
+          ]}
+          placeholder="Rechercher un lieu"
+          placeholderTextColor={placeholderColor}
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={searchText}
+          onChangeText={onSearchChange}
+        />
+      </View>
+
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={[
+            styles.searchInput,
+            {
+              borderColor,
+              color: inputTextColor,
+              backgroundColor: surfaceColor,
+            },
+          ]}
+          placeholder="Scanner ou saisir un code barre"
+          placeholderTextColor={placeholderColor}
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={barcodeText}
+          onChangeText={onBarcodeChange}
+        />
+      </View>
+    </View>
+  );
+});
 
 /**
  * Location selection screen for a single hierarchy level.
  */
-export function LocationLevelScreen({ parentLocation }: LocationLevelScreenProps) {
+export function LocationLevelScreen({
+  parentLocation,
+  parentTrail,
+}: LocationLevelScreenProps) {
   const router = useRouter();
   const { session, setGroup, setLocation } = useComptageSession();
   const [searchText, setSearchText] = useState<string>("");
@@ -158,6 +309,7 @@ export function LocationLevelScreen({ parentLocation }: LocationLevelScreenProps
   const highlightColor = useThemeColor({ light: "#2563EB", dark: "#60A5FA" }, "tint");
   const mutedColor = useThemeColor({ light: "#64748B", dark: "#94A3B8" }, "icon");
   const inputTextColor = useThemeColor({}, "text");
+  const textColor = useThemeColor({}, "text");
   const placeholderColor = useThemeColor(
     { light: "#94A3B8", dark: "#6B7280" },
     "icon"
@@ -183,6 +335,9 @@ export function LocationLevelScreen({ parentLocation }: LocationLevelScreenProps
   const handleSelectLocation = useCallback(
     (location: Location, hasChildren: boolean) => {
       if (hasChildren) {
+        const nextTrail = parentLocation
+          ? [...parentTrail, parentLocation]
+          : parentTrail;
         router.push({
           pathname: "/(drawer)/lieux/[parentId]",
           params: {
@@ -190,6 +345,7 @@ export function LocationLevelScreen({ parentLocation }: LocationLevelScreenProps
             parentName: location.locationname,
             parentDesc: location.desc ?? "",
             parentBarcode: location.barcode ?? "",
+            parentTrail: JSON.stringify(nextTrail),
           },
         });
         return;
@@ -198,7 +354,7 @@ export function LocationLevelScreen({ parentLocation }: LocationLevelScreenProps
       setLocation(location);
       router.push("/(drawer)/scan");
     },
-    [router, setLocation]
+    [parentLocation, parentTrail, router, setLocation]
   );
 
   /** Select the current parent location for scanning. */
@@ -215,6 +371,29 @@ export function LocationLevelScreen({ parentLocation }: LocationLevelScreenProps
     setGroup(null);
     router.push("/(drawer)/groupes");
   }, [router, setGroup]);
+
+  /** Navigate back within the location hierarchy. */
+  const handleBack = useCallback(() => {
+    if (!parentLocation) {
+      return;
+    }
+    if (parentTrail.length === 0) {
+      router.replace("/(drawer)/lieux");
+      return;
+    }
+    const nextParent = parentTrail[parentTrail.length - 1];
+    const nextTrail = parentTrail.slice(0, -1);
+    router.replace({
+      pathname: "/(drawer)/lieux/[parentId]",
+      params: {
+        parentId: nextParent.id,
+        parentName: nextParent.locationname,
+        parentDesc: nextParent.desc ?? "",
+        parentBarcode: nextParent.barcode ?? "",
+        parentTrail: JSON.stringify(nextTrail),
+      },
+    });
+  }, [parentLocation, parentTrail, router]);
 
   /** Retry location list retrieval after an error. */
   const handleRetry = useCallback(() => {
@@ -283,92 +462,44 @@ export function LocationLevelScreen({ parentLocation }: LocationLevelScreenProps
   const combinedErrorMessage = errorMessage ?? childErrorMessage ?? null;
   const showInitialLoading = loading && locations.length === 0 && !isRefreshing;
 
-  /** Render the list header with group context and search. */
-  const renderHeader = useCallback(() => {
-    return (
-      <View style={styles.headerContainer}>
-        <View style={styles.header}>
-          <ThemedText type="title">
-            {parentLocation ? `Sous-lieux` : "Lieux"}
-          </ThemedText>
-          <ThemedText style={[styles.subtitle, { color: mutedColor }]}>
-            {parentLocation
-              ? `Selectionnez un sous-lieu de ${parentLocation.locationname}.`
-              : "Selectionnez le lieu de comptage."}
-          </ThemedText>
-        </View>
-
-        <View style={styles.groupBanner}>
-          <View style={styles.groupInfo}>
-            <ThemedText type="defaultSemiBold">
-              Groupe: {session.group?.nom}
-            </ThemedText>
-            <ThemedText style={[styles.cardMeta, { color: mutedColor }]}>
-              Appareil: {session.group?.appareil_identifiant}
-            </ThemedText>
-          </View>
-          <TouchableOpacity
-            style={[styles.changeButton, { borderColor }]}
-            onPress={handleChangeGroup}
-          >
-            <ThemedText style={styles.changeButtonText}>Changer</ThemedText>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.searchContainer}>
-          <TextInput
-            style={[
-              styles.searchInput,
-              {
-                borderColor,
-                color: inputTextColor,
-                backgroundColor: surfaceColor,
-              },
-            ]}
-            placeholder="Rechercher un lieu"
-            placeholderTextColor={placeholderColor}
-            autoCapitalize="none"
-            autoCorrect={false}
-            value={searchText}
-            onChangeText={handleSearchChange}
-          />
-        </View>
-
-        <View style={styles.searchContainer}>
-          <TextInput
-            style={[
-              styles.searchInput,
-              {
-                borderColor,
-                color: inputTextColor,
-                backgroundColor: surfaceColor,
-              },
-            ]}
-            placeholder="Scanner ou saisir un code barre"
-            placeholderTextColor={placeholderColor}
-            autoCapitalize="none"
-            autoCorrect={false}
-            value={barcodeText}
-            onChangeText={handleBarcodeChange}
-          />
-        </View>
-      </View>
-    );
-  }, [
-    barcodeText,
-    borderColor,
-    handleBarcodeChange,
-    handleChangeGroup,
-    handleSearchChange,
-    inputTextColor,
-    mutedColor,
-    parentLocation,
-    placeholderColor,
-    searchText,
-    session.group?.appareil_identifiant,
-    session.group?.nom,
-    surfaceColor,
-  ]);
+  const headerElement = useMemo(
+    () => (
+      <LocationHeader
+        groupName={session.group?.nom}
+        deviceName={session.group?.appareil_identifiant}
+        parentLocation={parentLocation}
+        searchText={searchText}
+        barcodeText={barcodeText}
+        onSearchChange={handleSearchChange}
+        onBarcodeChange={handleBarcodeChange}
+        onBack={handleBack}
+        onChangeGroup={handleChangeGroup}
+        borderColor={borderColor}
+        surfaceColor={surfaceColor}
+        mutedColor={mutedColor}
+        inputTextColor={inputTextColor}
+        placeholderColor={placeholderColor}
+        textColor={textColor}
+      />
+    ),
+    [
+      barcodeText,
+      borderColor,
+      handleBarcodeChange,
+      handleBack,
+      handleChangeGroup,
+      handleSearchChange,
+      inputTextColor,
+      mutedColor,
+      parentLocation,
+      placeholderColor,
+      searchText,
+      session.group?.appareil_identifiant,
+      session.group?.nom,
+      surfaceColor,
+      textColor,
+    ]
+  );
 
   /** Render the empty/loading state for the location list. */
   const renderEmptyComponent = useCallback(() => {
@@ -465,7 +596,7 @@ export function LocationLevelScreen({ parentLocation }: LocationLevelScreenProps
         data={locations}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
-        ListHeaderComponent={renderHeader}
+        ListHeaderComponent={headerElement}
         ListEmptyComponent={renderEmptyComponent}
         ListFooterComponent={renderFooter}
         contentContainerStyle={styles.listContent}
@@ -487,6 +618,24 @@ const styles = StyleSheet.create({
   },
   header: {
     gap: 6,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  backButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  backButtonText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   subtitle: {
     fontSize: 14,

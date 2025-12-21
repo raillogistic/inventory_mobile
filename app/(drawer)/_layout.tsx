@@ -45,6 +45,7 @@ export default function DrawerLayout() {
   return (
     <Drawer
       drawerContent={renderDrawerContent}
+      initialRouteName="lieux"
       screenOptions={{
         headerShown: true,
         drawerActiveTintColor: tintColor,

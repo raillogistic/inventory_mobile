@@ -1,10 +1,21 @@
-import React, { createContext, useCallback, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import type {
   CampagneInventaire,
   GroupeComptage,
   Location,
 } from "@/lib/graphql/inventory-operations";
+import {
+  clearComptageSession,
+  loadComptageSession,
+  saveComptageSession,
+} from "@/lib/storage/comptage-session";
 
 /** Selected comptage session values stored in context. */
 export type ComptageSession = {
@@ -18,6 +29,8 @@ export type ComptageSession = {
 
 /** Context shape for the comptage session provider. */
 export type ComptageSessionContextValue = {
+  /** Whether persisted session data has been loaded. */
+  isReady: boolean;
   /** Current session selections. */
   session: ComptageSession;
   /** Update the selected campaign and reset dependent selections. */
@@ -49,33 +62,93 @@ export function ComptageSessionProvider({
   const [campaign, setCampaignState] = useState<CampagneInventaire | null>(null);
   const [group, setGroupState] = useState<GroupeComptage | null>(null);
   const [location, setLocationState] = useState<Location | null>(null);
+  const [isReady, setIsReady] = useState(false);
 
-  /** Select a campaign and clear group/location selections. */
-  const setCampaign = useCallback(
-    (nextCampaign: CampagneInventaire | null) => {
-      setCampaignState(nextCampaign);
-      setGroupState(null);
-      setLocationState(null);
+  /** Persist the comptage session snapshot. */
+  const persistSession = useCallback(
+    async (nextSession: ComptageSession) => {
+      await saveComptageSession(nextSession);
     },
     []
   );
 
-  /** Select a group and clear the location selection. */
-  const setGroup = useCallback((nextGroup: GroupeComptage | null) => {
-    setGroupState(nextGroup);
-    setLocationState(null);
+  /** Load persisted comptage selections on startup. */
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadSession = async () => {
+      const storedSession = await loadComptageSession();
+      if (!isMounted) {
+        return;
+      }
+
+      if (storedSession) {
+        setCampaignState(storedSession.campaign ?? null);
+        setGroupState(storedSession.group ?? null);
+        setLocationState(storedSession.location ?? null);
+      }
+
+      setIsReady(true);
+    };
+
+    loadSession();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
+  /** Select a campaign and clear group/location selections. */
+  const setCampaign = useCallback(
+    (nextCampaign: CampagneInventaire | null) => {
+      const nextSession = {
+        campaign: nextCampaign,
+        group: null,
+        location: null,
+      };
+      setCampaignState(nextSession.campaign);
+      setGroupState(nextSession.group);
+      setLocationState(nextSession.location);
+      void persistSession(nextSession);
+    },
+    [persistSession]
+  );
+
+  /** Select a group and clear the location selection. */
+  const setGroup = useCallback(
+    (nextGroup: GroupeComptage | null) => {
+      const nextSession = {
+        campaign,
+        group: nextGroup,
+        location: null,
+      };
+      setGroupState(nextSession.group);
+      setLocationState(nextSession.location);
+      void persistSession(nextSession);
+    },
+    [campaign, persistSession]
+  );
+
   /** Select a location for the session. */
-  const setLocation = useCallback((nextLocation: Location | null) => {
-    setLocationState(nextLocation);
-  }, []);
+  const setLocation = useCallback(
+    (nextLocation: Location | null) => {
+      const nextSession = {
+        campaign,
+        group,
+        location: nextLocation,
+      };
+      setLocationState(nextSession.location);
+      void persistSession(nextSession);
+    },
+    [campaign, group, persistSession]
+  );
 
   /** Reset all selections in the comptage session. */
   const resetSession = useCallback(() => {
     setCampaignState(null);
     setGroupState(null);
     setLocationState(null);
+    void clearComptageSession();
   }, []);
 
   const session = useMemo<ComptageSession>(
@@ -85,13 +158,14 @@ export function ComptageSessionProvider({
 
   const contextValue = useMemo<ComptageSessionContextValue>(
     () => ({
+      isReady,
       session,
       setCampaign,
       setGroup,
       setLocation,
       resetSession,
     }),
-    [session, setCampaign, setGroup, setLocation, resetSession]
+    [isReady, session, setCampaign, setGroup, setLocation, resetSession]
   );
 
   return (
