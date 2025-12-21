@@ -1,7 +1,9 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  ensureInventoryDatabase,
+  getInventorySqlRows,
+  runInventorySql,
+} from "@/lib/offline/inventory-sqlite";
 
-/** Storage key for persisted scan history. */
-const SCAN_HISTORY_KEY = "inventory_scan_history";
 /** Maximum number of stored history items. */
 const SCAN_HISTORY_LIMIT = 200;
 
@@ -33,28 +35,66 @@ export type ScanHistoryItem = {
   serialNumber: string | null;
 };
 
+/** SQLite row representation for scan history items. */
+type ScanHistoryRow = {
+  /** Unique identifier for the history item. */
+  id: string;
+  /** Scanned article code. */
+  code: string;
+  /** Optional article description. */
+  description: string | null;
+  /** Optional captured image URI. */
+  image_uri: string | null;
+  /** Visual status associated with the scan. */
+  status: "scanned" | "missing" | "other" | "pending";
+  /** Human-readable status label. */
+  status_label: string;
+  /** Capture timestamp as ISO string. */
+  captured_at: string;
+  /** Location identifier where the scan occurred. */
+  location_id: string | null;
+  /** Location label displayed in the history. */
+  location_name: string;
+  /** Etat selectionne lors du scan, si applicable. */
+  etat: "BIEN" | "MOYENNE" | "HORS_SERVICE" | null;
+  /** Optional observation captured during the scan. */
+  observation: string | null;
+  /** Optional serial number captured during the scan. */
+  serial_number: string | null;
+};
+
+/**
+ * Map a SQLite row into a scan history item.
+ */
+function mapHistoryRow(row: ScanHistoryRow): ScanHistoryItem {
+  return {
+    id: row.id,
+    code: row.code,
+    description: row.description ?? null,
+    imageUri: row.image_uri ?? null,
+    status: row.status,
+    statusLabel: row.status_label,
+    capturedAt: row.captured_at,
+    locationId: row.location_id ?? null,
+    locationName: row.location_name,
+    etat: row.etat ?? null,
+    observation: row.observation ?? null,
+    serialNumber: row.serial_number ?? null,
+  };
+}
+
 /**
  * Read the stored scan history list.
  */
 export async function getScanHistory(): Promise<ScanHistoryItem[]> {
-  const rawValue = await AsyncStorage.getItem(SCAN_HISTORY_KEY);
-  if (!rawValue) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(rawValue) as ScanHistoryItem[];
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.map((item) => ({
-      ...item,
-      observation: item.observation ?? null,
-      serialNumber: item.serialNumber ?? null,
-    }));
-  } catch {
-    return [];
-  }
+  await ensureInventoryDatabase();
+  const result = await runInventorySql<ScanHistoryRow>(
+    "SELECT id, code, description, image_uri, status, status_label, captured_at, " +
+      "location_id, location_name, etat, observation, serial_number " +
+      "FROM inventory_scan_history ORDER BY captured_at DESC LIMIT ?",
+    [SCAN_HISTORY_LIMIT]
+  );
+  return getInventorySqlRows(result).map(mapHistoryRow);
 }
 
 /**
@@ -63,7 +103,25 @@ export async function getScanHistory(): Promise<ScanHistoryItem[]> {
 export async function addScanHistoryItem(
   item: ScanHistoryItem
 ): Promise<void> {
-  const existing = await getScanHistory();
-  const updated = [item, ...existing].slice(0, SCAN_HISTORY_LIMIT);
-  await AsyncStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(updated));
+  await ensureInventoryDatabase();
+  await runInventorySql(
+    "INSERT OR REPLACE INTO inventory_scan_history " +
+      "(id, code, description, image_uri, status, status_label, captured_at, " +
+      "location_id, location_name, etat, observation, serial_number) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [
+      item.id,
+      item.code,
+      item.description ?? null,
+      item.imageUri ?? null,
+      item.status,
+      item.statusLabel,
+      item.capturedAt,
+      item.locationId ?? null,
+      item.locationName,
+      item.etat ?? null,
+      item.observation ?? null,
+      item.serialNumber ?? null,
+    ]
+  );
 }

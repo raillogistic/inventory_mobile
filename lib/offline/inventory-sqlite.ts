@@ -178,6 +178,47 @@ async function initializeInventoryDatabase(): Promise<void> {
     },
     {
       sql:
+        "CREATE TABLE IF NOT EXISTS inventory_scans (" +
+        "id TEXT PRIMARY KEY NOT NULL, " +
+        "remote_id TEXT, " +
+        "code_article TEXT NOT NULL, " +
+        "article_id TEXT, " +
+        "article_desc TEXT, " +
+        "campagne_id TEXT NOT NULL, " +
+        "groupe_id TEXT NOT NULL, " +
+        "lieu_id TEXT NOT NULL, " +
+        "lieu_name TEXT NOT NULL, " +
+        "observation TEXT, " +
+        "serial_number TEXT, " +
+        "etat TEXT, " +
+        "capture_le TEXT NOT NULL, " +
+        "source_scan TEXT, " +
+        "image_uri TEXT, " +
+        "status TEXT NOT NULL, " +
+        "status_label TEXT NOT NULL, " +
+        "is_synced INTEGER NOT NULL, " +
+        "updated_at TEXT NOT NULL" +
+        ")",
+    },
+    {
+      sql:
+        "CREATE TABLE IF NOT EXISTS inventory_scan_history (" +
+        "id TEXT PRIMARY KEY NOT NULL, " +
+        "code TEXT NOT NULL, " +
+        "description TEXT, " +
+        "image_uri TEXT, " +
+        "status TEXT NOT NULL, " +
+        "status_label TEXT NOT NULL, " +
+        "captured_at TEXT NOT NULL, " +
+        "location_id TEXT, " +
+        "location_name TEXT NOT NULL, " +
+        "etat TEXT, " +
+        "observation TEXT, " +
+        "serial_number TEXT" +
+        ")",
+    },
+    {
+      sql:
         "CREATE INDEX IF NOT EXISTS idx_inventory_locations_parent " +
         "ON inventory_locations(parent_id)",
     },
@@ -205,6 +246,36 @@ async function initializeInventoryDatabase(): Promise<void> {
       sql:
         "CREATE INDEX IF NOT EXISTS idx_inventory_articles_code " +
         "ON inventory_articles(code)",
+    },
+    {
+      sql:
+        "CREATE INDEX IF NOT EXISTS idx_inventory_scans_campaign " +
+        "ON inventory_scans(campagne_id)",
+    },
+    {
+      sql:
+        "CREATE INDEX IF NOT EXISTS idx_inventory_scans_group " +
+        "ON inventory_scans(groupe_id)",
+    },
+    {
+      sql:
+        "CREATE INDEX IF NOT EXISTS idx_inventory_scans_location " +
+        "ON inventory_scans(lieu_id)",
+    },
+    {
+      sql:
+        "CREATE INDEX IF NOT EXISTS idx_inventory_scans_capture " +
+        "ON inventory_scans(capture_le)",
+    },
+    {
+      sql:
+        "CREATE INDEX IF NOT EXISTS idx_inventory_scans_sync " +
+        "ON inventory_scans(is_synced)",
+    },
+    {
+      sql:
+        "CREATE INDEX IF NOT EXISTS idx_inventory_scan_history_capture " +
+        "ON inventory_scan_history(captured_at)",
     },
   ];
 

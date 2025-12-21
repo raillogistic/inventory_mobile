@@ -7,8 +7,10 @@ import {
   DrawerItemList,
 } from "@react-navigation/drawer";
 import { useRouter } from "expo-router";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
 
 import { useAuth } from "@/hooks/use-auth";
+import { useInventoryOffline } from "@/hooks/use-inventory-offline";
 import { useThemeColor } from "@/hooks/use-theme-color";
 
 /**
@@ -16,15 +18,30 @@ import { useThemeColor } from "@/hooks/use-theme-color";
  */
 export default function DrawerLayout() {
   const { clearAuthSession } = useAuth();
+  const { isHydrated, isSyncing } = useInventoryOffline();
   const router = useRouter();
   const tintColor = useThemeColor({}, "tint");
   const textColor = useThemeColor({}, "text");
+  const shouldShowSyncIndicator = !isHydrated || isSyncing;
 
   /** Clear auth tokens and return to the login screen. */
   const handleLogout = useCallback(async () => {
     await clearAuthSession();
     router.replace("/(auth)/login");
   }, [clearAuthSession, router]);
+
+  /** Render a header indicator while inventory data is loading. */
+  const renderHeaderSyncIndicator = useCallback(() => {
+    if (!shouldShowSyncIndicator) {
+      return null;
+    }
+
+    return (
+      <View style={styles.headerIndicator}>
+        <ActivityIndicator size="small" color={tintColor} />
+      </View>
+    );
+  }, [shouldShowSyncIndicator, tintColor]);
 
   /** Render the drawer content with an explicit logout action. */
   const renderDrawerContent = useCallback(
@@ -50,6 +67,7 @@ export default function DrawerLayout() {
         headerShown: true,
         drawerActiveTintColor: tintColor,
         drawerLabelStyle: { color: textColor },
+        headerRight: renderHeaderSyncIndicator,
       }}
     >
       <Drawer.Screen
@@ -103,3 +121,9 @@ export default function DrawerLayout() {
     </Drawer>
   );
 }
+
+const styles = StyleSheet.create({
+  headerIndicator: {
+    marginRight: 16,
+  },
+});

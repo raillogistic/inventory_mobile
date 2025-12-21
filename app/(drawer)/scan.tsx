@@ -31,24 +31,19 @@ import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useComptageSession } from "@/hooks/use-comptage-session";
+import { useInventoryOffline } from "@/hooks/use-inventory-offline";
 import { useThemeColor } from "@/hooks/use-theme-color";
 import {
-  type ArticleLookup,
-  type ArticleLookupVariables,
-  type AffectationListVariables,
-  type EnregistrementInventaireInput,
   type EnregistrementInventaireEtat,
-  type EnregistrementInventaireListItem,
-  type EnregistrementInventaireListVariables,
-  type EnregistrementInventaireResult,
+  type OfflineArticleEntry,
 } from "@/lib/graphql/inventory-operations";
 import {
-  useAffectationList,
-  useArticleLookupByCodes,
-  useCreateEnregistrementInventaire,
-  useEnregistrementInventaireList,
-  useUpdateEnregistrementInventaire,
-} from "@/lib/graphql/inventory-hooks";
+  createInventoryScan,
+  loadInventoryScans,
+  updateInventoryScanDetails,
+  type InventoryScanRecord,
+  type InventoryScanStatus,
+} from "@/lib/offline/inventory-scan-storage";
 import {
   addScanHistoryItem,
   type ScanHistoryItem,
@@ -57,7 +52,7 @@ import {
 /** Payload used to render recent scan entries. */
 type RecentScan = {
   /** Unique identifier for the scan, if available. */
-  id: string | null;
+  id: string;
   /** Scanned article code. */
   code: string;
   /** Optional article description returned by the API. */
@@ -67,11 +62,6 @@ type RecentScan = {
   /** Capture timestamp as an ISO string. */
   capturedAt: string;
 };
-
-/** Scan payloads used to build local entries. */
-type EnregistrementInventaireSummary =
-  | EnregistrementInventaireResult
-  | EnregistrementInventaireListItem;
 
 /** Origin source of the scan capture. */
 type ScanSource = "manual" | "camera";
@@ -150,8 +140,6 @@ type ScanFrameLayout = {
 
 /** Limits the number of scans fetched to drive status updates. */
 const SCAN_STATUS_LIMIT = 2000;
-/** Limits the number of location articles fetched per request. */
-const LOCATION_ARTICLE_LIMIT = 2000;
 /** Supported 1D barcode formats for the camera scanner. */
 const BARCODE_TYPES: BarcodeType[] = [
   "code128",
@@ -188,69 +176,22 @@ function formatTimestamp(value: string): string {
 }
 
 /**
- * Convert API scan response into a local list item.
+ * Build a lookup table for offline articles keyed by normalized code.
  */
-function buildRecentScan(
-  result: EnregistrementInventaireSummary | null,
-  fallbackCode: string
-): RecentScan {
-  const now = new Date().toISOString();
-  return {
-    id: result?.id ?? null,
-    code: result?.code_article ?? fallbackCode,
-    description: result?.article?.desc ?? null,
-    hasArticle: Boolean(result?.article),
-    capturedAt: result?.capture_le ?? now,
-  };
-}
+function buildOfflineArticleLookup(
+  articles: OfflineArticleEntry[]
+): Map<string, OfflineArticleEntry> {
+  const map = new Map<string, OfflineArticleEntry>();
 
-/**
- * Convert a scan list item into a recent scan entry.
- */
-function mapScanItemToRecentScan(
-  item: EnregistrementInventaireListItem
-): RecentScan {
-  return buildRecentScan(item, item.code_article);
-}
-
-/**
- * Build a stable key for a scan entry.
- */
-function getScanKey(scan: RecentScan): string {
-  return scan.id ?? `${scan.code}-${scan.capturedAt}`;
-}
-
-/**
- * Merge scans, keeping unique entries in order.
- */
-function mergeUniqueScans(
-  primary: RecentScan[],
-  secondary: RecentScan[]
-): RecentScan[] {
-  const seen = new Set<string>();
-  const merged: RecentScan[] = [];
-
-  for (const scan of primary) {
-    const key = getScanKey(scan);
-    if (seen.has(key)) {
+  for (const article of articles) {
+    const normalized = normalizeScanCode(article.code);
+    if (!normalized) {
       continue;
     }
-
-    seen.add(key);
-    merged.push(scan);
+    map.set(normalized, article);
   }
 
-  for (const scan of secondary) {
-    const key = getScanKey(scan);
-    if (seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    merged.push(scan);
-  }
-
-  return merged;
+  return map;
 }
 
 /**
@@ -309,12 +250,19 @@ function isBarcodeInsideFrame(
 export default function ScanScreen() {
   const router = useRouter();
   const { session, setLocation } = useComptageSession();
+  const { cache, isHydrated, isSyncing, syncError } = useInventoryOffline();
   const [codeValue, setCodeValue] = useState<string>("");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [scanSubmitError, setScanSubmitError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [etatMessage, setEtatMessage] = useState<string | null>(null);
-  const [localScans, setLocalScans] = useState<RecentScan[]>([]);
+  const [scanRecords, setScanRecords] = useState<InventoryScanRecord[]>([]);
+  const [scansLoading, setScansLoading] = useState(false);
+  const [scansErrorMessage, setScansErrorMessage] = useState<string | null>(null);
+  const [isSubmittingScan, setIsSubmittingScan] = useState(false);
   const [scanDetail, setScanDetail] = useState<ScanDetail | null>(null);
+  const [etatLoading, setEtatLoading] = useState(false);
+  const [etatErrorMessage, setEtatErrorMessage] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -357,52 +305,38 @@ export default function ScanScreen() {
       return () => subscription.remove();
     }, [handleHardwareBack])
   );
-  const scanQueryVariables = useMemo<EnregistrementInventaireListVariables>(
-    () => ({
-      campagne: campaignId,
-      groupe: groupId,
-      lieu: locationId,
-      limit: SCAN_STATUS_LIMIT,
-    }),
-    [campaignId, groupId, locationId]
-  );
-  const scanQuerySkip = !campaignId || !groupId || !locationId;
 
-  const locationArticleVariables = useMemo<AffectationListVariables>(
-    () => ({
-      location: locationId,
-      limit: LOCATION_ARTICLE_LIMIT,
-    }),
-    [locationId]
-  );
-  const locationArticleSkip = !locationId;
+  /** Load local scans for the selected campaign/group/location. */
+  const loadScans = useCallback(async () => {
+    if (!campaignId || !groupId || !locationId) {
+      setScanRecords([]);
+      return;
+    }
 
-  const {
-    scans: serverScans,
-    totalCount: serverCount,
-    errorMessage: scansErrorMessage,
-    refetch: refetchScans,
-  } = useEnregistrementInventaireList(scanQueryVariables, {
-    skip: scanQuerySkip,
-  });
+    setScansLoading(true);
+    setScansErrorMessage(null);
+    try {
+      const records = await loadInventoryScans({
+        campaignId,
+        groupId,
+        locationId,
+        limit: SCAN_STATUS_LIMIT,
+      });
+      setScanRecords(records);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Impossible de charger les scans.";
+      setScansErrorMessage(message);
+    } finally {
+      setScansLoading(false);
+    }
+  }, [campaignId, groupId, locationId]);
 
-  const {
-    affectations,
-    loading: locationArticlesLoading,
-    errorMessage: locationArticlesErrorMessage,
-    refetch: refetchLocationArticles,
-  } = useAffectationList(locationArticleVariables, {
-    skip: locationArticleSkip,
-  });
-
-  const { submit, loading, errorMessage, mutationErrors, ok } =
-    useCreateEnregistrementInventaire();
-  const {
-    submit: submitEtat,
-    loading: etatLoading,
-    errorMessage: etatErrorMessage,
-    mutationErrors: etatMutationErrors,
-  } = useUpdateEnregistrementInventaire();
+  useEffect(() => {
+    void loadScans();
+  }, [loadScans]);
 
   const borderColor = useThemeColor(
     { light: "#E2E8F0", dark: "#2B2E35" },
@@ -459,7 +393,7 @@ export default function ScanScreen() {
   const hasCameraPermission = cameraPermission?.granted ?? false;
   const canAskCameraPermission = cameraPermission?.canAskAgain ?? true;
   const isScanModalVisible = Boolean(scanDetail);
-  const isScanBusy = isScanLocked || loading || isScanModalVisible;
+  const isScanBusy = isScanLocked || isSubmittingScan || isScanModalVisible;
   const isCameraButtonDisabled =
     !hasCameraPermission && !canAskCameraPermission;
   const cameraButtonLabel = hasCameraPermission
@@ -476,79 +410,55 @@ export default function ScanScreen() {
     : canAskCameraPermission
     ? "Autorisez la camera pour scanner."
     : "Autorisation refusee. Activez-la dans les reglages.";
-  const serverScanItems = useMemo(
-    () => serverScans.map(mapScanItemToRecentScan),
-    [serverScans]
+  const locationArticlesLoading =
+    !isHydrated || (isSyncing && cache.articles.length === 0);
+  const locationArticlesErrorMessage = syncError;
+  const articleLookup = useMemo(
+    () => buildOfflineArticleLookup(cache.articles),
+    [cache.articles]
   );
-  const mergedScans = useMemo(
-    () => mergeUniqueScans(localScans, serverScanItems),
-    [localScans, serverScanItems]
+  const resolvedScans = useMemo<RecentScan[]>(
+    () =>
+      scanRecords.map((scan) => {
+        const normalized = normalizeScanCode(scan.codeArticle);
+        const lookup = normalized ? articleLookup.get(normalized) : null;
+        const description = scan.articleDescription ?? lookup?.desc ?? null;
+        const hasArticle = Boolean(scan.articleId) || Boolean(lookup);
+        return {
+          id: scan.id,
+          code: scan.codeArticle,
+          description,
+          hasArticle,
+          capturedAt: scan.capturedAt,
+        };
+      }),
+    [articleLookup, scanRecords]
   );
   const existingCodes = useMemo(() => {
     const set = new Set<string>();
-    for (const scan of mergedScans) {
-      const normalized = normalizeScanCode(scan.code);
+    for (const scan of scanRecords) {
+      const normalized = normalizeScanCode(scan.codeArticle);
       if (normalized) {
         set.add(normalized);
       }
     }
     return set;
-  }, [mergedScans]);
-  const scanCodes = useMemo(() => {
-    const codes = new Set<string>();
-    for (const scan of mergedScans) {
-      const trimmed = scan.code.trim();
-      if (!trimmed) {
-        continue;
-      }
-      codes.add(trimmed);
-      codes.add(trimmed.toUpperCase());
-      codes.add(trimmed.toLowerCase());
-    }
-    return Array.from(codes);
-  }, [mergedScans]);
-  const articleQueryVariables = useMemo<ArticleLookupVariables>(
-    () => ({
-      codes: scanCodes,
-      limit: scanCodes.length || null,
-    }),
-    [scanCodes]
-  );
-  const { articles: lookupArticles, errorMessage: articlesErrorMessage } =
-    useArticleLookupByCodes(articleQueryVariables, {
-      skip: scanCodes.length === 0,
-    });
-  const articleLookup = useMemo(() => {
-    const map = new Map<string, ArticleLookup>();
-    for (const article of lookupArticles) {
-      const normalized = normalizeScanCode(article.code);
-      if (!normalized) {
-        continue;
-      }
-      map.set(normalized, article);
-    }
-    return map;
-  }, [lookupArticles]);
-  const resolvedScans = useMemo(
-    () =>
-      mergedScans.map((scan) => {
-        const normalized = normalizeScanCode(scan.code);
-        const lookup = normalized ? articleLookup.get(normalized) : null;
-        const description = scan.description ?? lookup?.desc ?? null;
-        const hasArticle = scan.hasArticle || Boolean(lookup);
-        return { ...scan, description, hasArticle };
-      }),
-    [articleLookup, mergedScans]
-  );
+  }, [scanRecords]);
   const locationArticles = useMemo(() => {
+    if (!locationId) {
+      return [];
+    }
+
     const map = new Map<
       string,
       { id: string; code: string; description: string | null }
     >();
 
-    for (const affectation of affectations) {
-      const article = affectation.article;
-      if (!article) {
+    for (const article of cache.articles) {
+      const isAssigned = article.locations.some(
+        (location) => location.id === locationId
+      );
+      if (!isAssigned) {
         continue;
       }
 
@@ -569,7 +479,7 @@ export default function ScanScreen() {
     const items = Array.from(map.values());
     items.sort((a, b) => a.code.localeCompare(b.code));
     return items;
-  }, [affectations]);
+  }, [cache.articles, locationId]);
   const locationArticleCodeSet = useMemo(() => {
     const set = new Set<string>();
     for (const article of locationArticles) {
@@ -648,17 +558,13 @@ export default function ScanScreen() {
     locationArticleItems.length,
     scannedLocationCount,
   ]);
-  const totalScanCount = useMemo(() => {
-    if (serverCount !== null) {
-      return serverCount + localScans.length;
-    }
-
-    return mergedScans.length;
-  }, [localScans.length, mergedScans.length, serverCount]);
+  const totalScanCount = scanRecords.length;
   const lastScan = resolvedScans[0] ?? null;
   const showArticleLoading =
-    locationArticlesLoading && articleListItems.length === 0 && !isRefreshing;
-  const cameraOverlayLabel = loading ? "Scan en cours..." : null;
+    (locationArticlesLoading || scansLoading) &&
+    articleListItems.length === 0 &&
+    !isRefreshing;
+  const cameraOverlayLabel = isSubmittingScan ? "Scan en cours..." : null;
   const scanBorderColor = useMemo(
     () =>
       scanBorderAnim.interpolate({
@@ -707,37 +613,28 @@ export default function ScanScreen() {
   /** Find the latest scan detail for a code already scanned. */
   const findExistingScan = useCallback(
     (normalizedCode: string) => {
-      for (const scan of serverScans) {
-        if (normalizeScanCode(scan.code_article) === normalizedCode) {
+      for (const scan of scanRecords) {
+        if (normalizeScanCode(scan.codeArticle) === normalizedCode) {
+          const lookup = normalizedCode
+            ? articleLookup.get(normalizedCode)
+            : null;
           return {
-            id: scan.id ?? null,
-            code: scan.code_article,
-            description: scan.article?.desc ?? null,
+            id: scan.id,
+            code: scan.codeArticle,
+            description: scan.articleDescription ?? lookup?.desc ?? null,
             observation: scan.observation ?? null,
-            serialNumber: scan.serial_number ?? null,
-            capturedAt: scan.capture_le ?? new Date().toISOString(),
-            hasArticle: Boolean(scan.article),
-          };
-        }
-      }
-
-      for (const scan of resolvedScans) {
-        if (normalizeScanCode(scan.code) === normalizedCode) {
-          return {
-            id: scan.id ?? null,
-            code: scan.code,
-            description: scan.description ?? null,
-            observation: null,
-            serialNumber: null,
+            serialNumber: scan.serialNumber ?? null,
             capturedAt: scan.capturedAt,
-            hasArticle: scan.hasArticle,
+            hasArticle: Boolean(scan.articleId) || Boolean(lookup),
+            status: scan.status,
+            statusLabel: scan.statusLabel,
           };
         }
       }
 
       return null;
     },
-    [resolvedScans, serverScans]
+    [articleLookup, scanRecords]
   );
   const scanLineTranslateY = useMemo(() => {
     const height = scanButtonLayout?.height ?? 0;
@@ -782,40 +679,27 @@ export default function ScanScreen() {
   }, [hasCameraPermission, isCameraActive]);
 
   useEffect(() => {
-    setLocalScans([]);
+    setScanRecords([]);
     setScanDetail(null);
     setInfoMessage(null);
     setEtatMessage(null);
     setSelectedEtat(null);
+    setLocalError(null);
+    setScanSubmitError(null);
+    setScansErrorMessage(null);
+    setEtatErrorMessage(null);
     scanLockRef.current = false;
     setIsScanLocked(false);
   }, [campaignId, groupId, locationId]);
-
-  useEffect(() => {
-    if (localScans.length === 0) {
-      return;
-    }
-
-    const serverKeys = new Set(serverScanItems.map(getScanKey));
-    setLocalScans((current) => {
-      if (current.length === 0) {
-        return current;
-      }
-
-      const filtered = current.filter(
-        (scan) => !serverKeys.has(getScanKey(scan))
-      );
-
-      return filtered.length === current.length ? current : filtered;
-    });
-  }, [localScans, serverScanItems]);
 
   /** Update the scanned code input value. */
   const handleCodeChange = useCallback((value: string) => {
     setCodeValue(value.trim());
     setLocalError(null);
+    setScanSubmitError(null);
     setInfoMessage(null);
     setEtatMessage(null);
+    setEtatErrorMessage(null);
   }, []);
 
   /** Close the scan detail modal and prepare for the next scan. */
@@ -863,6 +747,7 @@ export default function ScanScreen() {
     (value: EnregistrementInventaireEtat) => {
       setSelectedEtat(value);
       setEtatMessage(null);
+      setEtatErrorMessage(null);
     },
     []
   );
@@ -870,11 +755,15 @@ export default function ScanScreen() {
   /** Update the observation value. */
   const handleObservationChange = useCallback((value: string) => {
     setObservationValue(value);
+    setEtatMessage(null);
+    setEtatErrorMessage(null);
   }, []);
 
   /** Update the serial number value. */
   const handleSerialNumberChange = useCallback((value: string) => {
     setSerialNumberValue(value);
+    setEtatMessage(null);
+    setEtatErrorMessage(null);
   }, []);
 
   /** Sync observation and serial number with the current scan detail. */
@@ -923,38 +812,25 @@ export default function ScanScreen() {
     setIsRefreshing(true);
     try {
       setLocalError(null);
-      const refreshCalls: Promise<unknown>[] = [];
-      if (!scanQuerySkip) {
-        refreshCalls.push(refetchScans(scanQueryVariables));
-      }
-      if (!locationArticleSkip) {
-        refreshCalls.push(refetchLocationArticles(locationArticleVariables));
-      }
-      await Promise.all(refreshCalls);
+      setScanSubmitError(null);
+      setInfoMessage(null);
+      setEtatMessage(null);
+      setEtatErrorMessage(null);
+      setScansErrorMessage(null);
+      await loadScans();
     } finally {
       setIsRefreshing(false);
     }
-  }, [
-    locationArticleSkip,
-    locationArticleVariables,
-    refetchLocationArticles,
-    refetchScans,
-    scanQuerySkip,
-    scanQueryVariables,
-  ]);
+  }, [loadScans]);
 
-  /** Create the scan record through the API. */
+  /** Create the scan record locally in SQLite. */
   const submitScan = useCallback(
     async (
       rawCode: string,
       source: ScanSource,
       imageUri: string | null = null
     ) => {
-      if (loading) {
-        return;
-      }
-
-      if (isScanModalVisible) {
+      if (isSubmittingScan || isScanModalVisible) {
         return;
       }
 
@@ -971,40 +847,39 @@ export default function ScanScreen() {
         return;
       }
 
-      if (existingCodes.has(normalizedCode)) {
-        const existingScan = findExistingScan(normalizedCode);
-        const captureTimestamp = new Date().toISOString();
-        const lookup = normalizedCode
-          ? articleLookup.get(normalizedCode)
-          : null;
-        const isInLocation = normalizedCode
-          ? locationArticleCodeSet.has(normalizedCode)
-          : false;
-        const hasKnownArticle =
-          Boolean(existingScan?.hasArticle) || Boolean(lookup);
-        const status: LocationArticleStatus = isInLocation
-          ? "scanned"
-          : hasKnownArticle
-          ? "other"
-          : "missing";
-        const statusLabel = getStatusLabel(status);
-        const detailCode = existingScan?.code ?? cleanedCode;
-        const detailDescription =
-          existingScan?.description ?? lookup?.desc ?? null;
+      const lookup = normalizedCode ? articleLookup.get(normalizedCode) : null;
+      const isInLocation = normalizedCode
+        ? locationArticleCodeSet.has(normalizedCode)
+        : false;
+      const existingScan = existingCodes.has(normalizedCode)
+        ? findExistingScan(normalizedCode)
+        : null;
+      const hasKnownArticle =
+        Boolean(existingScan?.hasArticle) || Boolean(lookup);
+      const status: InventoryScanStatus = isInLocation
+        ? "scanned"
+        : hasKnownArticle
+        ? "other"
+        : "missing";
+      const statusLabel = getStatusLabel(status);
+      const detailDescription =
+        existingScan?.description ?? lookup?.desc ?? null;
 
+      if (existingScan) {
         setLocalError(null);
+        setScanSubmitError(null);
         setInfoMessage("Code deja scanne pour ce lieu.");
         setScanDetail({
-          id: existingScan?.id ?? null,
-          code: detailCode,
+          id: existingScan.id,
+          code: existingScan.code,
           description: detailDescription,
           imageUri,
           status,
           statusLabel,
-          capturedAt: captureTimestamp,
+          capturedAt: existingScan.capturedAt,
           alreadyScanned: true,
-          observation: existingScan?.observation ?? null,
-          serialNumber: existingScan?.serialNumber ?? null,
+          observation: existingScan.observation ?? null,
+          serialNumber: existingScan.serialNumber ?? null,
         });
         setIsCameraActive(false);
         setSelectedEtat(null);
@@ -1015,51 +890,39 @@ export default function ScanScreen() {
       }
 
       setLocalError(null);
+      setScanSubmitError(null);
       setInfoMessage(null);
 
-      const payload: EnregistrementInventaireInput = {
-        campagne: campaignId,
-        groupe: groupId,
-        lieu: locationId,
-        code_article: cleanedCode,
-        capture_le: new Date().toISOString(),
-        source_scan: source,
-      };
-
-      const response = await submit(payload);
-      const created =
-        response?.create_enregistrementinventaire?.enregistrementinventaire ??
-        null;
-
-      if (response?.create_enregistrementinventaire?.ok) {
-        const nextScan = buildRecentScan(created, cleanedCode);
-        const lookup = normalizedCode
-          ? articleLookup.get(normalizedCode)
-          : null;
-        const isInLocation = normalizedCode
-          ? locationArticleCodeSet.has(normalizedCode)
-          : false;
-        const hasKnownArticle = Boolean(created?.article) || Boolean(lookup);
-        const status: LocationArticleStatus = isInLocation
-          ? "scanned"
-          : hasKnownArticle
-          ? "other"
-          : "missing";
-        const statusLabel = getStatusLabel(status);
-        const detailDescription = nextScan.description ?? lookup?.desc ?? null;
-
-        setLocalScans((current) => {
-          const next = [nextScan, ...current];
-          return next.slice(0, SCAN_STATUS_LIMIT);
-        });
-        setScanDetail({
-          id: created?.id ?? null,
-          code: cleanedCode,
-          description: detailDescription,
+      const locationName = session.location?.locationname ?? "Lieu inconnu";
+      setIsSubmittingScan(true);
+      try {
+        const record = await createInventoryScan({
+          campaignId,
+          groupId,
+          locationId,
+          locationName,
+          codeArticle: cleanedCode,
+          articleId: lookup?.id ?? null,
+          articleDescription: lookup?.desc ?? null,
+          capturedAt: new Date().toISOString(),
+          sourceScan: source,
           imageUri,
           status,
           statusLabel,
-          capturedAt: nextScan.capturedAt,
+        });
+
+        setScanRecords((current) => {
+          const next = [record, ...current];
+          return next.slice(0, SCAN_STATUS_LIMIT);
+        });
+        setScanDetail({
+          id: record.id,
+          code: record.codeArticle,
+          description: record.articleDescription ?? detailDescription,
+          imageUri: record.imageUri,
+          status,
+          statusLabel,
+          capturedAt: record.capturedAt,
           alreadyScanned: false,
           observation: null,
           serialNumber: null,
@@ -1069,17 +932,15 @@ export default function ScanScreen() {
         setEtatMessage(null);
         setCodeValue("");
         await triggerSuccessHaptic();
-        void refetchScans(scanQueryVariables);
-        return;
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Le scan n'a pas pu etre enregistre.";
+        setScanSubmitError(message);
+      } finally {
+        setIsSubmittingScan(false);
       }
-
-      if (response?.create_enregistrementinventaire?.errors?.length) {
-        const error = response.create_enregistrementinventaire.errors[0];
-        setLocalError(`${error.field}: ${error.messages.join(", ")}`);
-        return;
-      }
-
-      setLocalError("Le scan n'a pas pu etre enregistre.");
     },
     [
       articleLookup,
@@ -1088,14 +949,10 @@ export default function ScanScreen() {
       findExistingScan,
       groupId,
       isScanModalVisible,
+      isSubmittingScan,
       locationArticleCodeSet,
       locationId,
-      loading,
-      session.location?.id,
       session.location?.locationname,
-      refetchScans,
-      scanQueryVariables,
-      submit,
       triggerSuccessHaptic,
     ]
   );
@@ -1105,7 +962,7 @@ export default function ScanScreen() {
     (result: BarcodeScanningResult) => {
       if (
         scanLockRef.current ||
-        loading ||
+        isSubmittingScan ||
         isScanModalVisible ||
         !hasCameraPermission ||
         !isCameraActive
@@ -1130,21 +987,21 @@ export default function ScanScreen() {
         const imageUri = await captureScanImage();
         await submitScan(scannedCode, "camera", imageUri);
         scanLockRef.current = false;
-      setIsScanLocked(false);
-    })();
+        setIsScanLocked(false);
+      })();
     },
     [
       captureScanImage,
       hasCameraPermission,
       isCameraActive,
       isScanModalVisible,
-      loading,
+      isSubmittingScan,
       scanFrameLayout,
       submitScan,
     ]
   );
 
-  /** Create the scan record through the API from the manual input. */
+  /** Create the scan record from the manual input. */
   const handleManualSubmit = useCallback(async () => {
     await submitScan(codeValue, "manual");
   }, [codeValue, submitScan]);
@@ -1155,29 +1012,15 @@ export default function ScanScreen() {
       return localError;
     }
 
-    if (errorMessage) {
-      return errorMessage;
-    }
-
-    if (mutationErrors && mutationErrors.length > 0) {
-      const error = mutationErrors[0];
-      return `${error.field}: ${error.messages.join(", ")}`;
-    }
-
-    if (ok === false) {
-      return "Le scan n'a pas pu etre enregistre.";
+    if (scanSubmitError) {
+      return scanSubmitError;
     }
 
     return null;
-  }, [errorMessage, localError, mutationErrors, ok]);
+  }, [localError, scanSubmitError]);
   const etatErrorDisplay = useMemo(() => {
     if (etatMessage) {
       return etatMessage;
-    }
-
-    if (etatMutationErrors && etatMutationErrors.length > 0) {
-      const error = etatMutationErrors[0];
-      return `${error.field}: ${error.messages.join(", ")}`;
     }
 
     if (etatErrorMessage) {
@@ -1185,7 +1028,7 @@ export default function ScanScreen() {
     }
 
     return null;
-  }, [etatErrorMessage, etatMessage, etatMutationErrors]);
+  }, [etatErrorMessage, etatMessage]);
   const infoDisplay = useMemo(() => infoMessage, [infoMessage]);
 
   /** Derived error message for list loading. */
@@ -1200,12 +1043,8 @@ export default function ScanScreen() {
       errors.push(`Scans: ${scansErrorMessage}`);
     }
 
-    if (articlesErrorMessage) {
-      errors.push(`Recherche: ${articlesErrorMessage}`);
-    }
-
     return errors.length > 0 ? errors.join(" | ") : null;
-  }, [articlesErrorMessage, locationArticlesErrorMessage, scansErrorMessage]);
+  }, [locationArticlesErrorMessage, scansErrorMessage]);
 
   /** Provide stable keys for the article list. */
   const keyExtractor = useCallback(
@@ -1306,23 +1145,44 @@ export default function ScanScreen() {
       return;
     }
 
+    setEtatMessage(null);
+
     if (shouldUpdate) {
-      const response = await submitEtat({
-        id: scanDetail.id,
-        etat: selectedEtat ?? null,
-        observation: hasObservation ? trimmedObservation : null,
-        serial_number: hasSerialNumber ? trimmedSerialNumber : null,
-      });
+      setEtatLoading(true);
+      setEtatErrorMessage(null);
+      try {
+        await updateInventoryScanDetails({
+          id: scanDetail.id,
+          etat: selectedEtat ?? null,
+          observation: hasObservation ? trimmedObservation : null,
+          serialNumber: hasSerialNumber ? trimmedSerialNumber : null,
+        });
 
-      if (response?.update_enregistrementinventaire?.errors?.length) {
-        const error = response.update_enregistrementinventaire.errors[0];
-        setEtatMessage(`${error.field}: ${error.messages.join(", ")}`);
+        setScanRecords((current) =>
+          current.map((record) =>
+            record.id === scanDetail.id
+              ? {
+                  ...record,
+                  etat: selectedEtat ?? record.etat ?? null,
+                  observation: hasObservation
+                    ? trimmedObservation
+                    : record.observation ?? null,
+                  serialNumber: hasSerialNumber
+                    ? trimmedSerialNumber
+                    : record.serialNumber ?? null,
+                }
+              : record
+          )
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Les informations n'ont pas pu etre enregistrees.";
+        setEtatErrorMessage(message);
         return;
-      }
-
-      if (!response?.update_enregistrementinventaire?.ok) {
-        setEtatMessage("Les informations n'ont pas pu etre enregistrees.");
-        return;
+      } finally {
+        setEtatLoading(false);
       }
     }
 
@@ -1356,7 +1216,7 @@ export default function ScanScreen() {
     selectedEtat,
     session.location?.id,
     session.location?.locationname,
-    submitEtat,
+    updateInventoryScanDetails,
   ]);
   if (!campaignId || !groupId || !locationId) {
     return (
@@ -1484,11 +1344,11 @@ export default function ScanScreen() {
                     { backgroundColor: highlightColor },
                   ]}
                   onPress={handleManualSubmit}
-                  disabled={loading || isScanModalVisible}
+                  disabled={isSubmittingScan || isScanModalVisible}
                   accessibilityRole="button"
                   accessibilityLabel="Enregistrer le code article"
                 >
-                  {loading ? (
+                  {isSubmittingScan ? (
                     <ActivityIndicator color={buttonTextColor} size="small" />
                   ) : (
                     <ThemedText

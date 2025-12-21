@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { Platform, ToastAndroid } from "react-native";
 import { ApolloError, useApolloClient } from "@apollo/client";
 
 import { useAuth } from "@/hooks/use-auth";
@@ -55,6 +56,17 @@ const EMPTY_CACHE: InventoryOfflineCache = {
 const EMPTY_METADATA: InventoryOfflineMetadata = {
   lastSyncAt: null,
 };
+
+/**
+ * Display a toast notification when data is loaded locally.
+ */
+function showLocalSyncToast(): void {
+  if (Platform.OS !== "android") {
+    return;
+  }
+
+  ToastAndroid.show("Donnees chargees localement.", ToastAndroid.SHORT);
+}
 
 /** Context shape for offline inventory data. */
 export type InventoryOfflineContextValue = {
@@ -204,6 +216,7 @@ export function InventoryOfflineProvider({
 
       setCache(nextCache);
       setMetadata(nextMetadata);
+      showLocalSyncToast();
     } catch (error) {
       const message =
         error instanceof ApolloError

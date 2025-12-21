@@ -1,13 +1,15 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useInventoryOffline } from "@/hooks/use-inventory-offline";
 import {
-  type EnregistrementInventaireListItem,
   type EnregistrementInventaireListVariables,
   type EnregistrementInventaireEtat,
   type OfflineArticleEntry,
 } from "@/lib/graphql/inventory-operations";
-import { useEnregistrementInventaireList } from "@/lib/graphql/inventory-hooks";
+import {
+  loadInventoryScans,
+  type InventoryScanRecord,
+} from "@/lib/offline/inventory-scan-storage";
 
 /** Max number of scans to load for recap aggregation. */
 const RECAP_SCAN_LIMIT = 5000;
@@ -145,17 +147,17 @@ function buildLocationArticleIndex(
 }
 
 /**
- * Transform raw scan items into recap-ready records.
+ * Transform local scan records into recap-ready records.
  */
-function mapScans(scans: EnregistrementInventaireListItem[]): RecapScanItem[] {
+function mapScans(scans: InventoryScanRecord[]): RecapScanItem[] {
   return scans.map((scan) => ({
     id: scan.id,
-    code: scan.code_article,
-    description: scan.article?.desc ?? null,
+    code: scan.codeArticle,
+    description: scan.articleDescription ?? null,
     etat: scan.etat ?? null,
-    capturedAt: scan.capture_le ?? null,
-    locationId: scan.lieu.id,
-    locationName: scan.lieu.locationname,
+    capturedAt: scan.capturedAt ?? null,
+    locationId: scan.locationId,
+    locationName: scan.locationName,
   }));
 }
 
@@ -213,8 +215,9 @@ export function useInventoryRecap(
   );
   const skip = !campaignId || !groupId;
   const { cache, isHydrated } = useInventoryOffline();
-  const { scans, loading, errorMessage, refetch } =
-    useEnregistrementInventaireList(variables, { skip });
+  const [scans, setScans] = useState<InventoryScanRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const recapScans = useMemo(() => mapScans(scans), [scans]);
   const scansByLocation = useMemo(
@@ -312,10 +315,33 @@ export function useInventoryRecap(
 
   const refresh = useCallback(async () => {
     if (skip) {
+      setScans([]);
       return;
     }
-    await refetch(variables);
-  }, [refetch, skip, variables]);
+
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      const records = await loadInventoryScans({
+        campaignId,
+        groupId,
+        limit: variables.limit ?? RECAP_SCAN_LIMIT,
+      });
+      setScans(records);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Impossible de charger le recap.";
+      setErrorMessage(message);
+    } finally {
+      setLoading(false);
+    }
+  }, [campaignId, groupId, skip, variables.limit]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   return {
     scansByLocation,
