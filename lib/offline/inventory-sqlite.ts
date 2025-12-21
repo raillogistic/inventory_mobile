@@ -27,6 +27,7 @@ const INVENTORY_DB_NAME = "inventory.db";
 let inventoryDatabase: SQLiteDatabase | null = null;
 let inventoryDatabasePromise: Promise<SQLiteDatabase> | null = null;
 let inventoryInitPromise: Promise<void> | null = null;
+let inventoryBatchQueue: Promise<void> = Promise.resolve();
 
 /**
  * Open (or reuse) the SQLite database instance.
@@ -90,11 +91,16 @@ export async function runInventorySqlBatch(
 
   const db = await openInventoryDatabase();
 
-  await db.withTransactionAsync(async () => {
-    for (const statement of statements) {
-      await db.runAsync(statement.sql, statement.params ?? []);
-    }
-  });
+  const executeBatch = async () => {
+    await db.withTransactionAsync(async () => {
+      for (const statement of statements) {
+        await db.runAsync(statement.sql, statement.params ?? []);
+      }
+    });
+  };
+
+  inventoryBatchQueue = inventoryBatchQueue.then(executeBatch, executeBatch);
+  await inventoryBatchQueue;
 }
 
 /**

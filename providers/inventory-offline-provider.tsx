@@ -14,17 +14,18 @@ import {
   CAMPAGNE_INVENTAIRE_LIST_QUERY,
   GROUPE_COMPTAGE_LIST_QUERY,
   LOCATION_LIST_QUERY,
-  OFFLINE_ARTICLE_LIST_QUERY,
+  OFFLINE_ARTICLE_PAGES_QUERY,
   SYNC_INVENTORY_SCANS_MUTATION,
   type CampagneInventaireListData,
   type CampagneInventaireListVariables,
   type GroupeComptageListData,
   type GroupeComptageListVariables,
   type InventoryScanSyncInput,
+  type OfflineArticlePageData,
+  type OfflineArticlePageVariables,
   type LocationListData,
   type LocationListVariables,
   type OfflineArticleEntry,
-  type OfflineArticleListData,
   type OfflineArticleLocation,
   type OfflineArticleQueryItem,
   type SyncInventoryScansData,
@@ -51,7 +52,7 @@ const OFFLINE_SYNC_LIMITS = {
   campaigns: 500,
   groups: 500,
   locations: 2000,
-  articles: 10000,
+  articles: 1000,
 } as const;
 
 /** Max number of scan records to sync per request. */
@@ -189,6 +190,35 @@ function mapOfflineArticles(
 }
 
 /**
+ * Load all articles for offline usage via paginated API calls.
+ */
+async function loadOfflineArticles(client: ReturnType<typeof useApolloClient>) {
+  const items: OfflineArticleQueryItem[] = [];
+  let currentPage = 1;
+  let totalPages = 1;
+
+  while (currentPage <= totalPages) {
+    const response = await client.query<
+      OfflineArticlePageData,
+      OfflineArticlePageVariables
+    >({
+      query: OFFLINE_ARTICLE_PAGES_QUERY,
+      variables: { page: currentPage, page_size: OFFLINE_SYNC_LIMITS.articles },
+      fetchPolicy: "network-only",
+    });
+
+    const pagePayload = response.data?.article_pages ?? null;
+    const pageItems = pagePayload?.data ?? [];
+    items.push(...pageItems);
+
+    totalPages = pagePayload?.totalPages ?? currentPage;
+    currentPage += 1;
+  }
+
+  return items;
+}
+
+/**
  * Provide cached inventory data and a sync action for offline mode.
  */
 export function InventoryOfflineProvider({
@@ -237,39 +267,34 @@ export function InventoryOfflineProvider({
     setSyncError(null);
 
     try {
-      const [
-        campaignResult,
-        groupResult,
-        locationResult,
-        articleResult,
-      ] = await Promise.all([
-        client.query<CampagneInventaireListData, CampagneInventaireListVariables>({
-          query: CAMPAGNE_INVENTAIRE_LIST_QUERY,
-          variables: { limit: OFFLINE_SYNC_LIMITS.campaigns },
-          fetchPolicy: "network-only",
-        }),
-        client.query<GroupeComptageListData, GroupeComptageListVariables>({
-          query: GROUPE_COMPTAGE_LIST_QUERY,
-          variables: { role: "COMPTAGE", limit: OFFLINE_SYNC_LIMITS.groups },
-          fetchPolicy: "network-only",
-        }),
-        client.query<LocationListData, LocationListVariables>({
-          query: LOCATION_LIST_QUERY,
-          variables: { limit: OFFLINE_SYNC_LIMITS.locations },
-          fetchPolicy: "network-only",
-        }),
-        client.query<OfflineArticleListData, { limit: number | null }>({
-          query: OFFLINE_ARTICLE_LIST_QUERY,
-          variables: { limit: OFFLINE_SYNC_LIMITS.articles },
-          fetchPolicy: "network-only",
-        }),
-      ]);
+      const [campaignResult, groupResult, locationResult, articleItems] =
+        await Promise.all([
+          client.query<
+            CampagneInventaireListData,
+            CampagneInventaireListVariables
+          >({
+            query: CAMPAGNE_INVENTAIRE_LIST_QUERY,
+            variables: { limit: OFFLINE_SYNC_LIMITS.campaigns },
+            fetchPolicy: "network-only",
+          }),
+          client.query<GroupeComptageListData, GroupeComptageListVariables>({
+            query: GROUPE_COMPTAGE_LIST_QUERY,
+            variables: { role: "COMPTAGE", limit: OFFLINE_SYNC_LIMITS.groups },
+            fetchPolicy: "network-only",
+          }),
+          client.query<LocationListData, LocationListVariables>({
+            query: LOCATION_LIST_QUERY,
+            variables: { limit: OFFLINE_SYNC_LIMITS.locations },
+            fetchPolicy: "network-only",
+          }),
+          loadOfflineArticles(client),
+        ]);
 
       const nextCache: InventoryOfflineCache = {
         campaigns: campaignResult.data?.campagneinventaires ?? [],
         groups: groupResult.data?.groupecomptages ?? [],
         locations: locationResult.data?.locations ?? [],
-        articles: mapOfflineArticles(articleResult.data?.articles ?? []),
+        articles: mapOfflineArticles(articleItems),
       };
 
       const nextMetadata: InventoryOfflineMetadata = {

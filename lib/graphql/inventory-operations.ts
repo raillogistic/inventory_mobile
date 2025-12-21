@@ -386,6 +386,31 @@ export type OfflineArticleListData = {
   articles: OfflineArticleQueryItem[];
 };
 
+/** Page wrapper returned for offline article pagination. */
+export type OfflineArticlePageData = {
+  /** Paginated article payload. */
+  article_pages: {
+    /** Article rows for the current page. */
+    data: OfflineArticleQueryItem[];
+    /** Total number of articles available. */
+    totalCount: number | null;
+    /** Total number of pages available. */
+    totalPages: number | null;
+    /** Current page number. */
+    currentPage: number | null;
+  } | null;
+};
+
+/** Variables for the offline article page query. */
+export type OfflineArticlePageVariables = {
+  /** Page number to fetch. */
+  page?: number | null;
+  /** Number of rows per page. */
+  page_size?: number | null;
+  /** Optional ordering expression. */
+  ordering?: string | null;
+};
+
 /** GraphQL query for loading articles with locations for offline sync. */
 export const OFFLINE_ARTICLE_LIST_QUERY = gql`
   query OfflineArticleList($limit: Int) {
@@ -399,6 +424,28 @@ export const OFFLINE_ARTICLE_LIST_QUERY = gql`
           locationname
         }
       }
+    }
+  }
+`;
+
+/** GraphQL query for loading articles with pagination for offline sync. */
+export const OFFLINE_ARTICLE_PAGES_QUERY = gql`
+  query OfflineArticlePages($page: Int, $page_size: Int) {
+    article_pages(page: $page, page_size: $page_size, ordering: "code") {
+      data {
+        id
+        code
+        desc
+        affectation_set {
+          location {
+            id
+            locationname
+          }
+        }
+      }
+      totalCount
+      totalPages
+      currentPage
     }
   }
 `;
