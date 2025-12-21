@@ -401,6 +401,9 @@ export type EnregistrementInventaireArticle = {
   desc: string | null;
 };
 
+/** Etat du materiel associe a un scan. */
+export type EnregistrementInventaireEtat = "BIEN" | "MOYENNE" | "HORS_SERVICE";
+
 /** Scan list item returned by the inventory API. */
 export type EnregistrementInventaireListItem = {
   /** Unique identifier for the scan record. */
@@ -409,6 +412,8 @@ export type EnregistrementInventaireListItem = {
   code_article: string;
   /** Article details resolved for the scanned code, when available. */
   article: EnregistrementInventaireArticle | null;
+  /** Etat du materiel lors du scan. */
+  etat: EnregistrementInventaireEtat | null;
   /** Capture timestamp. */
   capture_le: string | null;
 };
@@ -454,6 +459,7 @@ export const ENREGISTREMENT_INVENTAIRE_LIST_QUERY = gql`
         id
         desc
       }
+      etat
       capture_le
     }
     enregistrementinventaire_count(
@@ -486,6 +492,8 @@ export type EnregistrementInventaireInput = {
   donnees_capture?: string | null;
   /** Optional operator comment. */
   commentaire?: string | null;
+  /** Etat du materiel lors du scan. */
+  etat?: EnregistrementInventaireEtat | null;
 };
 
 /** Variables for the create_enregistrementinventaire mutation. */
@@ -510,6 +518,8 @@ export type EnregistrementInventaireResult = {
   code_article: string;
   /** Article details resolved for the scanned code, when available. */
   article: EnregistrementInventaireArticle | null;
+  /** Etat du materiel lors du scan. */
+  etat: EnregistrementInventaireEtat | null;
   /** Capture timestamp. */
   capture_le: string | null;
 };
@@ -545,6 +555,59 @@ export const CREATE_ENREGISTREMENT_INVENTAIRE_MUTATION = gql`
           id
           desc
         }
+        etat
+        capture_le
+      }
+    }
+  }
+`;
+
+/** Input payload for updating a scan record. */
+export type UpdateEnregistrementInventaireInput = {
+  /** Unique identifier for the scan record. */
+  id: string;
+  /** Etat du materiel selectionne apres scan. */
+  etat: EnregistrementInventaireEtat;
+};
+
+/** Variables for the update_enregistrementinventaire mutation. */
+export type UpdateEnregistrementInventaireVariables = {
+  /** Mutation input payload. */
+  input: UpdateEnregistrementInventaireInput;
+};
+
+/** Response payload for update_enregistrementinventaire. */
+export type UpdateEnregistrementInventaireData = {
+  /** Mutation wrapper with status and updated scan record. */
+  update_enregistrementinventaire: {
+    /** Success flag returned by the API. */
+    ok: boolean | null;
+    /** Any field-level validation errors. */
+    errors: MutationError[] | null;
+    /** Updated scan record if successful. */
+    enregistrementinventaire: EnregistrementInventaireResult | null;
+  } | null;
+};
+
+/** GraphQL mutation for updating a scan record. */
+export const UPDATE_ENREGISTREMENT_INVENTAIRE_MUTATION = gql`
+  mutation UpdateEnregistrementInventaire(
+    $input: EnregistrementInventaireUpdateGenericType!
+  ) {
+    update_enregistrementinventaire(input: $input) {
+      ok
+      errors {
+        field
+        messages
+      }
+      enregistrementinventaire {
+        id
+        code_article
+        article {
+          id
+          desc
+        }
+        etat
         capture_le
       }
     }

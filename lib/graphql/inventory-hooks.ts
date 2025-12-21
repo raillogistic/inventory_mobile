@@ -15,6 +15,7 @@ import {
   ENREGISTREMENT_INVENTAIRE_LIST_QUERY,
   GROUPE_COMPTAGE_LIST_QUERY,
   LOCATION_LIST_QUERY,
+  UPDATE_ENREGISTREMENT_INVENTAIRE_MUTATION,
   type AffectationListData,
   type AffectationListItem,
   type AffectationListVariables,
@@ -37,6 +38,9 @@ import {
   type LocationListData,
   type LocationListVariables,
   type MutationError,
+  type UpdateEnregistrementInventaireData,
+  type UpdateEnregistrementInventaireInput,
+  type UpdateEnregistrementInventaireVariables,
 } from "@/lib/graphql/inventory-operations";
 
 /** Normalized error message from Apollo errors. */
@@ -444,6 +448,57 @@ export function useCreateEnregistrementInventaire(): CreateEnregistrementInventa
   );
 
   const mutationPayload = result.data?.create_enregistrementinventaire ?? null;
+
+  return {
+    submit,
+    loading: result.loading,
+    error: result.error ?? null,
+    errorMessage: getApolloErrorMessage(result.error ?? null),
+    data: result.data ?? null,
+    mutationErrors: mutationPayload?.errors ?? null,
+    ok: mutationPayload?.ok ?? null,
+  };
+}
+
+/** Hook state for the update scan mutation. */
+export type UpdateEnregistrementInventaireState = {
+  /** Mutation submission handler. */
+  submit: (
+    input: UpdateEnregistrementInventaireInput
+  ) => Promise<UpdateEnregistrementInventaireData | null>;
+  /** Whether the mutation is currently loading. */
+  loading: boolean;
+  /** Error returned by Apollo, if any. */
+  error: ApolloError | null;
+  /** Derived error message for display. */
+  errorMessage: string | null;
+  /** Latest mutation response data. */
+  data: UpdateEnregistrementInventaireData | null;
+  /** Validation errors returned by the mutation. */
+  mutationErrors: MutationError[] | null;
+  /** Whether the mutation reported success. */
+  ok: boolean | null;
+};
+
+/**
+ * Update scan records for the comptage flow.
+ */
+export function useUpdateEnregistrementInventaire(): UpdateEnregistrementInventaireState {
+  const [mutate, result] = useMutation<
+    UpdateEnregistrementInventaireData,
+    UpdateEnregistrementInventaireVariables
+  >(UPDATE_ENREGISTREMENT_INVENTAIRE_MUTATION);
+
+  /** Submit a scan update to the backend. */
+  const submit = useCallback(
+    async (input: UpdateEnregistrementInventaireInput) => {
+      const response = await mutate({ variables: { input } });
+      return response.data ?? null;
+    },
+    [mutate]
+  );
+
+  const mutationPayload = result.data?.update_enregistrementinventaire ?? null;
 
   return {
     submit,

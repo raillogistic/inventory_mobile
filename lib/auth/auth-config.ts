@@ -3,7 +3,7 @@
  */
 export type AuthServerConfig = {
   /** Protocol used for the auth endpoint. */
-  protocol: 'http' | 'https';
+  protocol: "http" | "https";
   /** Hostname or IP address for the auth server. */
   host: string;
   /** Port for the auth server. */
@@ -16,18 +16,18 @@ export type AuthServerConfig = {
 
 /** Default auth server configuration (localhost:8000/auth). */
 export const DEFAULT_AUTH_SERVER_CONFIG: AuthServerConfig = {
-  protocol: 'http',
-  host: 'localhost',
-  port: '8000',
-  path: 'auth',
-  apiPath: 'gql',
+  protocol: "http",
+  host: "41.111.138.26",
+  port: "7777",
+  path: "auth",
+  apiPath: "gql",
 };
 
 /**
  * Build the full auth endpoint URL from a server config object.
  */
 export function buildAuthUrl(config: AuthServerConfig): string {
-  const normalizedPath = config.path.replace(/^\/+/, '');
+  const normalizedPath = config.path.replace(/^\/+/, "");
   return `${config.protocol}://${config.host}:${config.port}/${normalizedPath}`;
 }
 
@@ -35,7 +35,7 @@ export function buildAuthUrl(config: AuthServerConfig): string {
  * Build the protected GraphQL endpoint URL from a server config object.
  */
 export function buildApiUrl(config: AuthServerConfig): string {
-  const apiPath = config.apiPath ?? 'gql';
-  const normalizedPath = apiPath.replace(/^\/+/, '');
+  const apiPath = config.apiPath ?? "gql";
+  const normalizedPath = apiPath.replace(/^\/+/, "");
   return `${config.protocol}://${config.host}:${config.port}/${normalizedPath}`;
 }

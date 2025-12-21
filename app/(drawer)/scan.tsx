@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import {
   CameraView,
+  BarcodeType,
   type BarcodeScanningResult,
   useCameraPermissions,
 } from "expo-camera";
@@ -31,6 +32,7 @@ import {
   type ArticleLookupVariables,
   type AffectationListVariables,
   type EnregistrementInventaireInput,
+  type EnregistrementInventaireEtat,
   type EnregistrementInventaireListItem,
   type EnregistrementInventaireListVariables,
   type EnregistrementInventaireResult,
@@ -40,6 +42,7 @@ import {
   useArticleLookupByCodes,
   useCreateEnregistrementInventaire,
   useEnregistrementInventaireList,
+  useUpdateEnregistrementInventaire,
 } from "@/lib/graphql/inventory-hooks";
 
 /** Payload used to render recent scan entries. */
@@ -83,6 +86,8 @@ type LocationArticleItem = {
 
 /** Payload used to render the scan detail modal. */
 type ScanDetail = {
+  /** Unique identifier for the scan record. */
+  id: string | null;
   /** Scanned article code displayed in the modal. */
   code: string;
   /** Optional description for the scanned article. */
@@ -93,6 +98,14 @@ type ScanDetail = {
   statusLabel: string;
   /** Scan timestamp used for the modal subtitle. */
   capturedAt: string;
+};
+
+/** Etat option displayed in the scan modal. */
+type EtatOption = {
+  /** Etat value persisted in the backend. */
+  value: EnregistrementInventaireEtat;
+  /** Human-readable label shown in the UI. */
+  label: string;
 };
 
 /** Layout rectangle used to validate barcode positions. */
@@ -112,17 +125,23 @@ const SCAN_STATUS_LIMIT = 2000;
 /** Limits the number of location articles fetched per request. */
 const LOCATION_ARTICLE_LIMIT = 2000;
 /** Supported 1D barcode formats for the camera scanner. */
-const BARCODE_TYPES: BarcodeScanningResult["type"][] = [
-  "code128",
-  "code39",
-  "code93",
-  "ean13",
-  "ean8",
-  "itf14",
-  "upc_a",
-  "upc_e",
-  "upc_ean",
-  "codabar",
+const BARCODE_TYPES: BarcodeType[] = [
+  BarcodeType.code128,
+  BarcodeType.code39,
+  BarcodeType.code93,
+  BarcodeType.ean13,
+  BarcodeType.ean8,
+  BarcodeType.itf14,
+  BarcodeType.upcA,
+  BarcodeType.upcE,
+  BarcodeType.upcEan,
+  BarcodeType.codabar,
+];
+/** Etat options available when validating a scan. */
+const ETAT_OPTIONS: EtatOption[] = [
+  { value: "BIEN", label: "Bien" },
+  { value: "MOYENNE", label: "Moyenne" },
+  { value: "HORS_SERVICE", label: "Hors service" },
 ];
 
 /**
@@ -266,6 +285,7 @@ export default function ScanScreen() {
   const [codeValue, setCodeValue] = useState<string>("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [etatMessage, setEtatMessage] = useState<string | null>(null);
   const [localScans, setLocalScans] = useState<RecentScan[]>([]);
   const [scanDetail, setScanDetail] = useState<ScanDetail | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -274,6 +294,8 @@ export default function ScanScreen() {
   const [isScanLocked, setIsScanLocked] = useState(false);
   const [scanFrameLayout, setScanFrameLayout] =
     useState<ScanFrameLayout | null>(null);
+  const [selectedEtat, setSelectedEtat] =
+    useState<EnregistrementInventaireEtat | null>(null);
   const codeInputRef = useRef<TextInput>(null);
   const scanLockRef = useRef(false);
 
@@ -318,6 +340,12 @@ export default function ScanScreen() {
 
   const { submit, loading, errorMessage, mutationErrors, ok } =
     useCreateEnregistrementInventaire();
+  const {
+    submit: submitEtat,
+    loading: etatLoading,
+    errorMessage: etatErrorMessage,
+    mutationErrors: etatMutationErrors,
+  } = useUpdateEnregistrementInventaire();
 
   const borderColor = useThemeColor(
     { light: "#E2E8F0", dark: "#2B2E35" },
@@ -587,6 +615,8 @@ export default function ScanScreen() {
     setLocalScans([]);
     setScanDetail(null);
     setInfoMessage(null);
+    setEtatMessage(null);
+    setSelectedEtat(null);
     scanLockRef.current = false;
     setIsScanLocked(false);
   }, [campaignId, groupId, locationId]);
@@ -615,6 +645,7 @@ export default function ScanScreen() {
     setCodeValue(value.trim());
     setLocalError(null);
     setInfoMessage(null);
+    setEtatMessage(null);
   }, []);
 
   /** Close the scan detail modal and prepare for the next scan. */
@@ -622,8 +653,19 @@ export default function ScanScreen() {
     setScanDetail(null);
     setLocalError(null);
     setInfoMessage(null);
+    setEtatMessage(null);
     setCodeValue("");
+    setSelectedEtat(null);
+    if (hasCameraPermission) {
+      setIsCameraActive(true);
+    }
     codeInputRef.current?.focus();
+  }, [hasCameraPermission]);
+
+  /** Select the scan status before validating the scan. */
+  const handleEtatSelect = useCallback((value: EnregistrementInventaireEtat) => {
+    setSelectedEtat(value);
+    setEtatMessage(null);
   }, []);
 
   /** Trigger a success haptic feedback on supported devices. */
@@ -731,6 +773,7 @@ export default function ScanScreen() {
         null;
 
       if (response?.create_enregistrementinventaire?.ok) {
+        setIsCameraActive(false);
         const nextScan = buildRecentScan(created, cleanedCode);
         const lookup = normalizedCode
           ? articleLookup.get(normalizedCode)
@@ -753,12 +796,15 @@ export default function ScanScreen() {
           return next.slice(0, SCAN_STATUS_LIMIT);
         });
         setScanDetail({
+          id: created?.id ?? null,
           code: cleanedCode,
           description: detailDescription,
           status,
           statusLabel,
           capturedAt: nextScan.capturedAt,
         });
+        setSelectedEtat(null);
+        setEtatMessage(null);
         setCodeValue("");
         await triggerSuccessHaptic();
         void refetchScans(scanQueryVariables);
@@ -857,6 +903,22 @@ export default function ScanScreen() {
 
     return null;
   }, [errorMessage, localError, mutationErrors, ok]);
+  const etatErrorDisplay = useMemo(() => {
+    if (etatMessage) {
+      return etatMessage;
+    }
+
+    if (etatMutationErrors && etatMutationErrors.length > 0) {
+      const error = etatMutationErrors[0];
+      return `${error.field}: ${error.messages.join(", ")}`;
+    }
+
+    if (etatErrorMessage) {
+      return etatErrorMessage;
+    }
+
+    return null;
+  }, [etatErrorMessage, etatMessage, etatMutationErrors]);
   const infoDisplay = useMemo(() => infoMessage, [infoMessage]);
 
   /** Derived error message for list loading. */
@@ -952,6 +1014,36 @@ export default function ScanScreen() {
     ]
   );
 
+  /** Persist the selected state and move to the next scan. */
+  const handleConfirmEtat = useCallback(async () => {
+    if (!scanDetail?.id) {
+      setEtatMessage("Impossible d'identifier l'enregistrement.");
+      return;
+    }
+
+    if (!selectedEtat) {
+      setEtatMessage("Choisissez un etat avant de continuer.");
+      return;
+    }
+
+    setEtatMessage(null);
+    const response = await submitEtat({
+      id: scanDetail.id,
+      etat: selectedEtat,
+    });
+    if (response?.update_enregistrementinventaire?.ok) {
+      handleCloseScanModal();
+      return;
+    }
+
+    if (response?.update_enregistrementinventaire?.errors?.length) {
+      const error = response.update_enregistrementinventaire.errors[0];
+      setEtatMessage(`${error.field}: ${error.messages.join(", ")}`);
+      return;
+    }
+
+    setEtatMessage("L'etat n'a pas pu etre enregistre.");
+  }, [handleCloseScanModal, scanDetail?.id, selectedEtat, submitEtat]);
   if (!campaignId || !groupId || !locationId) {
     return (
       <ThemedView style={styles.container}>
@@ -1089,59 +1181,55 @@ export default function ScanScreen() {
                 onRequestClose={() => setIsCameraActive(false)}
               >
                 <View style={styles.cameraModalOverlay}>
-                  <View style={styles.cameraModalContent}>
-                    <View style={styles.cameraModalHeader}>
-                      <ThemedText type="defaultSemiBold">
-                        Mode scan
-                      </ThemedText>
-                      <TouchableOpacity
-                        style={[
-                          styles.cameraCloseButton,
-                          { backgroundColor: highlightColor },
-                        ]}
-                        onPress={() => setIsCameraActive(false)}
-                      >
-                        <ThemedText
-                          style={[
-                            styles.cameraCloseButtonText,
-                            { color: buttonTextColor },
-                          ]}
-                        >
-                          Fermer
-                        </ThemedText>
-                      </TouchableOpacity>
-                    </View>
+                  <CameraView
+                    style={styles.cameraPreview}
+                    onBarcodeScanned={handleBarcodeScanned}
+                    barcodeScannerSettings={{ barcodeTypes: BARCODE_TYPES }}
+                  />
+                  <View style={styles.scanFrameOverlay} pointerEvents="none">
+                    <View
+                      style={styles.scanFrame}
+                      onLayout={({ nativeEvent }) =>
+                        setScanFrameLayout(nativeEvent.layout)
+                      }
+                    />
+                  </View>
+                  <View style={styles.cameraHud}>
+                    <ThemedText style={styles.cameraHudTitle}>
+                      Mode scan
+                    </ThemedText>
                     <ThemedText style={[styles.cameraHint, { color: mutedColor }]}>
                       Placez le code-barres dans le cadre pour le scanner.
                     </ThemedText>
-                    <View style={styles.cameraModalBody}>
-                      <CameraView
-                        style={styles.cameraPreview}
-                        onBarcodeScanned={handleBarcodeScanned}
-                        barcodeScannerSettings={{ barcodeTypes: BARCODE_TYPES }}
-                      />
-                      <View style={styles.scanFrameOverlay} pointerEvents="none">
-                        <View
-                          style={styles.scanFrame}
-                          onLayout={({ nativeEvent }) =>
-                            setScanFrameLayout(nativeEvent.layout)
-                          }
-                        />
-                      </View>
-                      {isScanBusy && cameraOverlayLabel ? (
-                        <View style={styles.cameraOverlay}>
-                          <ThemedText
-                            style={[
-                              styles.cameraOverlayText,
-                              { color: buttonTextColor },
-                            ]}
-                          >
-                            {cameraOverlayLabel}
-                          </ThemedText>
-                        </View>
-                      ) : null}
-                    </View>
+                    <TouchableOpacity
+                      style={[
+                        styles.cameraCloseButton,
+                        { backgroundColor: highlightColor },
+                      ]}
+                      onPress={() => setIsCameraActive(false)}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.cameraCloseButtonText,
+                          { color: buttonTextColor },
+                        ]}
+                      >
+                        Fermer
+                      </ThemedText>
+                    </TouchableOpacity>
                   </View>
+                  {isScanBusy && cameraOverlayLabel ? (
+                    <View style={styles.cameraOverlay}>
+                      <ThemedText
+                        style={[
+                          styles.cameraOverlayText,
+                          { color: buttonTextColor },
+                        ]}
+                      >
+                        {cameraOverlayLabel}
+                      </ThemedText>
+                    </View>
+                  ) : null}
                 </View>
               </Modal>
             </View>
@@ -1261,7 +1349,7 @@ export default function ScanScreen() {
         transparent
         visible={isScanModalVisible}
         animationType="fade"
-        onRequestClose={handleCloseScanModal}
+        onRequestClose={handleConfirmEtat}
       >
         <View style={[styles.modalOverlay, { backgroundColor: modalOverlayColor }]}>
           {scanDetail ? (
@@ -1332,15 +1420,63 @@ export default function ScanScreen() {
                 <ThemedText style={[styles.modalMeta, { color: mutedColor }]}>
                   Scanne a {formatTimestamp(scanDetail.capturedAt)}
                 </ThemedText>
+                <View style={styles.etatSection}>
+                  <ThemedText type="subtitle">Etat du materiel</ThemedText>
+                  <View style={styles.etatOptions}>
+                    {ETAT_OPTIONS.map((option) => {
+                      const isSelected = selectedEtat === option.value;
+                      return (
+                        <TouchableOpacity
+                          key={option.value}
+                          style={[
+                            styles.etatOption,
+                            {
+                              borderColor,
+                              backgroundColor: isSelected
+                                ? highlightColor
+                                : "transparent",
+                            },
+                          ]}
+                          onPress={() => handleEtatSelect(option.value)}
+                        >
+                          <ThemedText
+                            style={[
+                              styles.etatOptionText,
+                              { color: isSelected ? buttonTextColor : mutedColor },
+                            ]}
+                          >
+                            {option.label}
+                          </ThemedText>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {etatErrorDisplay ? (
+                    <ThemedText style={styles.etatErrorText}>
+                      {etatErrorDisplay}
+                    </ThemedText>
+                  ) : null}
+                </View>
               </View>
 
               <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: highlightColor }]}
-                onPress={handleCloseScanModal}
+                style={[
+                  styles.modalButton,
+                  {
+                    backgroundColor: highlightColor,
+                    opacity: selectedEtat && !etatLoading ? 1 : 0.6,
+                  },
+                ]}
+                onPress={handleConfirmEtat}
+                disabled={!selectedEtat || etatLoading}
               >
-                <ThemedText style={styles.modalButtonText}>
-                  Scanner suivant
-                </ThemedText>
+                {etatLoading ? (
+                  <ActivityIndicator color={buttonTextColor} size="small" />
+                ) : (
+                  <ThemedText style={styles.modalButtonText}>
+                    Scanner suivant
+                  </ThemedText>
+                )}
               </TouchableOpacity>
             </View>
           ) : null}
@@ -1424,21 +1560,7 @@ const styles = StyleSheet.create({
   },
   cameraModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.9)",
-    justifyContent: "center",
-    padding: 20,
-  },
-  cameraModalContent: {
-    borderRadius: 16,
-    backgroundColor: "#0F172A",
-    padding: 16,
-    gap: 12,
-  },
-  cameraModalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
+    backgroundColor: "#0B1220",
   },
   cameraCloseButton: {
     borderRadius: 10,
@@ -1452,10 +1574,18 @@ const styles = StyleSheet.create({
   cameraHint: {
     fontSize: 13,
   },
-  cameraModalBody: {
-    borderRadius: 12,
-    overflow: "hidden",
-    height: 420,
+  cameraHud: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 24,
+    gap: 8,
+    alignItems: "center",
+  },
+  cameraHudTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#FFFFFF",
   },
   cameraOverlay: {
     position: "absolute",
@@ -1657,5 +1787,31 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#FFFFFF",
+  },
+  etatSection: {
+    width: "100%",
+    gap: 10,
+    paddingTop: 4,
+  },
+  etatOptions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 10,
+  },
+  etatOption: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  etatOptionText: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  etatErrorText: {
+    fontSize: 13,
+    textAlign: "center",
+    color: "#FCA5A5",
   },
 });
