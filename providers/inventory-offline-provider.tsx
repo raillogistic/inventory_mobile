@@ -1,6 +1,14 @@
-import React, { createContext, useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ApolloError, useApolloClient } from "@apollo/client";
 
+import { useAuth } from "@/hooks/use-auth";
 import {
   CAMPAGNE_INVENTAIRE_LIST_QUERY,
   GROUPE_COMPTAGE_LIST_QUERY,
@@ -117,6 +125,8 @@ export function InventoryOfflineProvider({
   const [isHydrated, setIsHydrated] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const { accessToken, isAuthenticated } = useAuth();
+  const lastSyncTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -208,6 +218,24 @@ export function InventoryOfflineProvider({
       setIsSyncing(false);
     }
   }, [client]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      lastSyncTokenRef.current = null;
+      return;
+    }
+
+    if (!isHydrated || !accessToken) {
+      return;
+    }
+
+    if (lastSyncTokenRef.current === accessToken) {
+      return;
+    }
+
+    lastSyncTokenRef.current = accessToken;
+    void syncAll();
+  }, [accessToken, isAuthenticated, isHydrated, syncAll]);
 
   const contextValue = useMemo<InventoryOfflineContextValue>(
     () => ({

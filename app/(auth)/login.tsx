@@ -149,8 +149,8 @@ export default function LoginScreen() {
   const router = useRouter();
   const { authUrl, setAuthSession } = useAuth();
   const [formState, setFormState] = useState<LoginFormState>({
-    username: "g1",
-    password: "it-2017***",
+    username: "device",
+    password: "admin2025",
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 

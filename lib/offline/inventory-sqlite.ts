@@ -1,7 +1,17 @@
-import * as SQLite from "expo-sqlite";
+import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 
 /** Allowed value types for SQL parameter bindings. */
 export type InventorySqlValue = string | number | null;
+
+/** Result payload returned by SQL helpers. */
+export type InventorySqlResult<T> = {
+  /** Rows returned from a SELECT query. */
+  rows: T[];
+  /** Number of rows changed for write operations. */
+  changes: number;
+  /** Last inserted row id when available. */
+  lastInsertRowId: number | null;
+};
 
 /** SQL statement with optional parameter bindings. */
 export type InventorySqlStatement = {
@@ -11,89 +21,87 @@ export type InventorySqlStatement = {
   params?: InventorySqlValue[];
 };
 
-/** Row list with the internal array helper available in expo-sqlite. */
-export type InventorySqlRowList<T> = SQLite.SQLResultSetRowList & {
-  /** Cached array of rows. */
-  _array?: T[];
-};
-
 /** Database file name for inventory offline storage. */
 const INVENTORY_DB_NAME = "inventory.db";
 
-let inventoryDatabase: SQLite.WebSQLDatabase | null = null;
+let inventoryDatabase: SQLiteDatabase | null = null;
+let inventoryDatabasePromise: Promise<SQLiteDatabase> | null = null;
 let inventoryInitPromise: Promise<void> | null = null;
 
 /**
  * Open (or reuse) the SQLite database instance.
  */
-function openInventoryDatabase(): SQLite.WebSQLDatabase {
-  if (!inventoryDatabase) {
-    inventoryDatabase = SQLite.openDatabase(INVENTORY_DB_NAME);
+async function openInventoryDatabase(): Promise<SQLiteDatabase> {
+  if (inventoryDatabase) {
+    return inventoryDatabase;
   }
 
+  if (!inventoryDatabasePromise) {
+    inventoryDatabasePromise = openDatabaseAsync(INVENTORY_DB_NAME);
+  }
+
+  inventoryDatabase = await inventoryDatabasePromise;
   return inventoryDatabase;
 }
 
 /**
- * Execute a SQL statement inside a dedicated transaction.
+ * Determine whether a SQL statement should return rows.
  */
-export function runInventorySql(
+function isSelectStatement(sql: string): boolean {
+  const normalized = sql.trim().toUpperCase();
+  return (
+    normalized.startsWith("SELECT") ||
+    normalized.startsWith("WITH") ||
+    normalized.startsWith("PRAGMA")
+  );
+}
+
+/**
+ * Execute a SQL statement and return rows or metadata.
+ */
+export async function runInventorySql<T>(
   sql: string,
   params: InventorySqlValue[] = []
-): Promise<SQLite.SQLResultSet> {
-  const db = openInventoryDatabase();
+): Promise<InventorySqlResult<T>> {
+  const db = await openInventoryDatabase();
 
-  return new Promise((resolve, reject) => {
-    db.transaction(
-      (tx) => {
-        tx.executeSql(
-          sql,
-          params,
-          (_, result) => resolve(result),
-          (_, error) => {
-            reject(error);
-            return true;
-          }
-        );
-      },
-      (error) => reject(error)
-    );
-  });
+  if (isSelectStatement(sql)) {
+    const rows = await db.getAllAsync<T>(sql, params);
+    return { rows, changes: 0, lastInsertRowId: null };
+  }
+
+  const result = await db.runAsync(sql, params);
+  return {
+    rows: [],
+    changes: result.changes ?? 0,
+    lastInsertRowId: result.lastInsertRowId ?? null,
+  };
 }
 
 /**
  * Execute multiple SQL statements in a single transaction.
  */
-export function runInventorySqlBatch(
+export async function runInventorySqlBatch(
   statements: InventorySqlStatement[]
 ): Promise<void> {
   if (statements.length === 0) {
-    return Promise.resolve();
+    return;
   }
 
-  const db = openInventoryDatabase();
+  const db = await openInventoryDatabase();
 
-  return new Promise((resolve, reject) => {
-    db.transaction(
-      (tx) => {
-        for (const statement of statements) {
-          tx.executeSql(statement.sql, statement.params ?? []);
-        }
-      },
-      (error) => reject(error),
-      () => resolve()
-    );
+  await db.withTransactionAsync(async () => {
+    for (const statement of statements) {
+      await db.runAsync(statement.sql, statement.params ?? []);
+    }
   });
 }
 
 /**
  * Extract a typed array of rows from a SQL result set.
  */
-export function getInventorySqlRows<T>(
-  result: SQLite.SQLResultSet
-): T[] {
-  const rows = result.rows as InventorySqlRowList<T>;
-  return rows._array ?? [];
+export function getInventorySqlRows<T>(result: InventorySqlResult<T>): T[] {
+  return result.rows ?? [];
 }
 
 /**
