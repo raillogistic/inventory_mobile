@@ -269,9 +269,10 @@ export function LocationLevelScreen({
       barcode: trimmedBarcode || null,
       parent: parentId ?? null,
       parentIsNull: parentId ? null : true,
+      forGroup: groupId,
       limit: LOCATION_LIST_LIMIT,
     }),
-    [parentId, trimmedBarcode, trimmedSearch]
+    [groupId, parentId, trimmedBarcode, trimmedSearch]
   );
 
   const { locations, loading, errorMessage, refetch } = useLocationList(
@@ -287,9 +288,10 @@ export function LocationLevelScreen({
   const childQueryVariables = useMemo<LocationListVariables>(
     () => ({
       parentIn: parentIds.length > 0 ? parentIds : null,
+      forGroup: groupId,
       limit: CHILD_LOCATION_LIMIT,
     }),
-    [parentIds]
+    [groupId, parentIds]
   );
 
   const childQuerySkip = !groupId || parentIds.length === 0;
@@ -301,13 +303,22 @@ export function LocationLevelScreen({
     refetch: refetchChildren,
   } = useLocationList(childQueryVariables, { skip: childQuerySkip });
 
-  const borderColor = useThemeColor({ light: "#E2E8F0", dark: "#2B2E35" }, "icon");
+  const borderColor = useThemeColor(
+    { light: "#E2E8F0", dark: "#2B2E35" },
+    "icon"
+  );
   const surfaceColor = useThemeColor(
     { light: "#FFFFFF", dark: "#1F232B" },
     "background"
   );
-  const highlightColor = useThemeColor({ light: "#2563EB", dark: "#60A5FA" }, "tint");
-  const mutedColor = useThemeColor({ light: "#64748B", dark: "#94A3B8" }, "icon");
+  const highlightColor = useThemeColor(
+    { light: "#2563EB", dark: "#60A5FA" },
+    "tint"
+  );
+  const mutedColor = useThemeColor(
+    { light: "#64748B", dark: "#94A3B8" },
+    "icon"
+  );
   const inputTextColor = useThemeColor({}, "text");
   const textColor = useThemeColor({}, "text");
   const placeholderColor = useThemeColor(
@@ -402,7 +413,13 @@ export function LocationLevelScreen({
       refreshCalls.push(refetchChildren(childQueryVariables));
     }
     void Promise.all(refreshCalls);
-  }, [childQuerySkip, childQueryVariables, queryVariables, refetch, refetchChildren]);
+  }, [
+    childQuerySkip,
+    childQueryVariables,
+    queryVariables,
+    refetch,
+    refetchChildren,
+  ]);
 
   /** Refresh the location list via pull-to-refresh. */
   const handleRefresh = useCallback(async () => {
@@ -416,7 +433,13 @@ export function LocationLevelScreen({
     } finally {
       setIsRefreshing(false);
     }
-  }, [childQuerySkip, childQueryVariables, queryVariables, refetch, refetchChildren]);
+  }, [
+    childQuerySkip,
+    childQueryVariables,
+    queryVariables,
+    refetch,
+    refetchChildren,
+  ]);
 
   /** Build a lookup of location ids that have children. */
   const hasChildrenById = useMemo(() => {

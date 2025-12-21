@@ -62,7 +62,9 @@ type GraphQLErrorLocation = {
 /**
  * Format the path array returned by GraphQL for display.
  */
-function formatGraphQLPath(path: ReadonlyArray<string | number> | undefined): string {
+function formatGraphQLPath(
+  path: ReadonlyArray<string | number> | undefined
+): string {
   if (!path || path.length === 0) {
     return "unknown";
   }
@@ -90,7 +92,9 @@ function formatGraphQLError(error: GraphQLError): string {
   const pathLabel = formatGraphQLPath(error.path);
   const locationLabel = formatGraphQLLocations(error.locations);
   const code =
-    typeof error.extensions?.code === "string" ? error.extensions.code : "unknown";
+    typeof error.extensions?.code === "string"
+      ? error.extensions.code
+      : "unknown";
 
   return `GraphQL error: ${error.message} (path: ${pathLabel}, locations: ${locationLabel}, code: ${code})`;
 }

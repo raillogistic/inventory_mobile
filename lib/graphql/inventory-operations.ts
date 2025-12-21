@@ -72,6 +72,8 @@ export type GroupeComptage = {
   pin_code: string;
   /** Role string for the group (COMPTAGE). */
   role: string;
+  /** Authorized locations for the group (including descendants). */
+  lieux_autorises: Location[];
   /** User assigned to the group. */
   utilisateur: ComptageUser;
   /** Campaign summary associated with the group. */
@@ -128,6 +130,10 @@ export const GROUPE_COMPTAGE_LIST_QUERY = gql`
       appareil_identifiant
       pin_code
       role
+      lieux_autorises {
+        id
+        locationname
+      }
       campagne {
         id
         nom
@@ -174,6 +180,8 @@ export type LocationListVariables = {
   parentIn?: string[] | null;
   /** Optional flag to restrict to top-level locations. */
   parentIsNull?: boolean | null;
+  /** Optional group id filter for authorized locations. */
+  forGroup?: string | null;
   /** Optional limit for query results. */
   limit?: number | null;
 };
@@ -192,6 +200,7 @@ export const LOCATION_LIST_QUERY = gql`
     $parent: ID
     $parentIn: [ID]
     $parentIsNull: Boolean
+    $forGroup: String
     $limit: Int
   ) {
     locations(
@@ -200,6 +209,7 @@ export const LOCATION_LIST_QUERY = gql`
       parent: $parent
       parent__in: $parentIn
       parent__isnull: $parentIsNull
+      for_group: $forGroup
       limit: $limit
       ordering: "locationname"
     ) {
@@ -401,6 +411,22 @@ export type EnregistrementInventaireArticle = {
   desc: string | null;
 };
 
+/** Location summary attached to a scan record. */
+export type EnregistrementInventaireLocation = {
+  /** Unique identifier for the location. */
+  id: string;
+  /** Display name for the location. */
+  locationname: string;
+};
+
+/** Comptage group summary attached to a scan record. */
+export type EnregistrementInventaireGroup = {
+  /** Unique identifier for the group. */
+  id: string;
+  /** Display name for the group. */
+  nom: string;
+};
+
 /** Etat du materiel associe a un scan. */
 export type EnregistrementInventaireEtat = "BIEN" | "MOYENNE" | "HORS_SERVICE";
 
@@ -412,6 +438,10 @@ export type EnregistrementInventaireListItem = {
   code_article: string;
   /** Article details resolved for the scanned code, when available. */
   article: EnregistrementInventaireArticle | null;
+  /** Location where the scan was captured. */
+  lieu: EnregistrementInventaireLocation;
+  /** Group responsible for the scan. */
+  groupe: EnregistrementInventaireGroup;
   /** Etat du materiel lors du scan. */
   etat: EnregistrementInventaireEtat | null;
   /** Capture timestamp. */
@@ -458,6 +488,14 @@ export const ENREGISTREMENT_INVENTAIRE_LIST_QUERY = gql`
       article {
         id
         desc
+      }
+      lieu {
+        id
+        locationname
+      }
+      groupe {
+        id
+        nom
       }
       etat
       capture_le
