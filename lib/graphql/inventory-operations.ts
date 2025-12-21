@@ -74,6 +74,16 @@ export type GroupeComptage = {
   role: string;
   /** User assigned to the group. */
   utilisateur: ComptageUser;
+  /** Campaign summary associated with the group. */
+  campagne: GroupeComptageCampagne;
+};
+
+/** Campaign summary attached to a comptage group. */
+export type GroupeComptageCampagne = {
+  /** Unique identifier for the campaign. */
+  id: string;
+  /** Optional campaign name for display. */
+  nom: string | null;
 };
 
 /** Variables for the groupecomptages query. */
@@ -118,6 +128,10 @@ export const GROUPE_COMPTAGE_LIST_QUERY = gql`
       appareil_identifiant
       pin_code
       role
+      campagne {
+        id
+        nom
+      }
       utilisateur {
         id
         username
@@ -156,6 +170,10 @@ export type LocationListVariables = {
   barcode?: string | null;
   /** Optional parent id filter for hierarchy. */
   parent?: string | null;
+  /** Optional list of parent ids for child lookup. */
+  parentIn?: string[] | null;
+  /** Optional flag to restrict to top-level locations. */
+  parentIsNull?: boolean | null;
   /** Optional limit for query results. */
   limit?: number | null;
 };
@@ -172,12 +190,16 @@ export const LOCATION_LIST_QUERY = gql`
     $nameContains: String
     $barcode: String
     $parent: ID
+    $parentIn: [ID]
+    $parentIsNull: Boolean
     $limit: Int
   ) {
     locations(
       locationname__icontains: $nameContains
       barcode: $barcode
       parent: $parent
+      parent__in: $parentIn
+      parent__isnull: $parentIsNull
       limit: $limit
       ordering: "locationname"
     ) {
@@ -193,12 +215,200 @@ export const LOCATION_LIST_QUERY = gql`
   }
 `;
 
+/** Article summary returned by affectation lookups. */
+export type LocationArticle = {
+  /** Unique identifier for the article. */
+  id: string;
+  /** Article code displayed during counting. */
+  code: string;
+  /** Optional article description. */
+  desc: string | null;
+};
+
+/** Location summary returned by affectation lookups. */
+export type AffectationLocation = {
+  /** Unique identifier for the location. */
+  id: string;
+  /** Display name for the location. */
+  locationname: string;
+};
+
+/** Affectation entry used to load articles assigned to a location. */
+export type AffectationListItem = {
+  /** Unique identifier for the affectation. */
+  id: string;
+  /** Article linked to the affectation. */
+  article: LocationArticle | null;
+  /** Location assigned to the affectation. */
+  location: AffectationLocation | null;
+};
+
+/** Variables for the affectations query. */
+export type AffectationListVariables = {
+  /** Location id used to filter affectations. */
+  location?: string | null;
+  /** Optional limit for query results. */
+  limit?: number | null;
+};
+
+/** Response payload for the affectations query. */
+export type AffectationListData = {
+  /** Affectations returned by the API. */
+  affectations: AffectationListItem[];
+};
+
+/** GraphQL query for listing affectations by location. */
+export const AFFECTATION_LIST_QUERY = gql`
+  query AffectationList($location: ID, $limit: Int) {
+    affectations(location: $location, limit: $limit) {
+      id
+      article {
+        id
+        code
+        desc
+      }
+      location {
+        id
+        locationname
+      }
+    }
+  }
+`;
+
+/** Article lookup item returned by the inventory API. */
+export type ArticleLookup = {
+  /** Unique identifier for the article. */
+  id: string;
+  /** Article code used to match scans. */
+  code: string;
+  /** Optional article description. */
+  desc: string | null;
+  /** Affectations linked to the article for location checks. */
+  affectation_set: ArticleLookupAffectation[];
+};
+
+/** Affectation payload used during article lookup. */
+export type ArticleLookupAffectation = {
+  /** Location assigned to the article, if any. */
+  location: ArticleLookupLocation | null;
+};
+
+/** Location summary attached to article lookup responses. */
+export type ArticleLookupLocation = {
+  /** Unique identifier for the location. */
+  id: string;
+  /** Display name for the location. */
+  locationname: string;
+};
+
+/** Variables for the articles lookup query. */
+export type ArticleLookupVariables = {
+  /** Article codes to resolve. */
+  codes: string[];
+  /** Optional limit for query results. */
+  limit?: number | null;
+};
+
+/** Response payload for the articles lookup query. */
+export type ArticleLookupData = {
+  /** Articles matching the provided codes. */
+  articles: ArticleLookup[];
+};
+
+/** GraphQL query for resolving article descriptions by code. */
+export const ARTICLE_LOOKUP_QUERY = gql`
+  query ArticleLookup($codes: [String], $limit: Int) {
+    articles(code__in: $codes, limit: $limit) {
+      id
+      code
+      desc
+      affectation_set {
+        location {
+          id
+          locationname
+        }
+      }
+    }
+  }
+`;
+
+/** Article location summary for offline storage. */
+export type OfflineArticleLocation = {
+  /** Unique identifier for the location. */
+  id: string;
+  /** Display name for the location. */
+  locationname: string;
+};
+
+/** Offline article entry used for full cache synchronization. */
+export type OfflineArticleEntry = {
+  /** Unique identifier for the article. */
+  id: string;
+  /** Article code used during scanning. */
+  code: string;
+  /** Optional article description. */
+  desc: string | null;
+  /** Locations linked to the article via affectations. */
+  locations: OfflineArticleLocation[];
+};
+
+/** Article list item returned by the offline sync query. */
+export type OfflineArticleQueryItem = {
+  /** Unique identifier for the article. */
+  id: string;
+  /** Article code used during scanning. */
+  code: string;
+  /** Optional article description. */
+  desc: string | null;
+  /** Affectations linked to the article. */
+  affectation_set: OfflineArticleAffectation[];
+};
+
+/** Affectation payload used to resolve offline article locations. */
+export type OfflineArticleAffectation = {
+  /** Location attached to the affectation. */
+  location: OfflineArticleLocation | null;
+};
+
+/** Response payload for the offline article list query. */
+export type OfflineArticleListData = {
+  /** Articles returned by the offline sync query. */
+  articles: OfflineArticleQueryItem[];
+};
+
+/** GraphQL query for loading articles with locations for offline sync. */
+export const OFFLINE_ARTICLE_LIST_QUERY = gql`
+  query OfflineArticleList($limit: Int) {
+    articles(limit: $limit, ordering: "code") {
+      id
+      code
+      desc
+      affectation_set {
+        location {
+          id
+          locationname
+        }
+      }
+    }
+  }
+`;
+
+/** Minimal article details tied to a scan record. */
+export type EnregistrementInventaireArticle = {
+  /** Unique identifier for the article. */
+  id: string;
+  /** Optional article description. */
+  desc: string | null;
+};
+
 /** Scan list item returned by the inventory API. */
 export type EnregistrementInventaireListItem = {
   /** Unique identifier for the scan record. */
   id: string;
   /** Scanned article code. */
   code_article: string;
+  /** Article details resolved for the scanned code, when available. */
+  article: EnregistrementInventaireArticle | null;
   /** Capture timestamp. */
   capture_le: string | null;
 };
@@ -240,6 +450,10 @@ export const ENREGISTREMENT_INVENTAIRE_LIST_QUERY = gql`
     ) {
       id
       code_article
+      article {
+        id
+        desc
+      }
       capture_le
     }
     enregistrementinventaire_count(
@@ -294,6 +508,8 @@ export type EnregistrementInventaireResult = {
   id: string;
   /** Scanned article code. */
   code_article: string;
+  /** Article details resolved for the scanned code, when available. */
+  article: EnregistrementInventaireArticle | null;
   /** Capture timestamp. */
   capture_le: string | null;
 };
@@ -325,6 +541,10 @@ export const CREATE_ENREGISTREMENT_INVENTAIRE_MUTATION = gql`
       enregistrementinventaire {
         id
         code_article
+        article {
+          id
+          desc
+        }
         capture_le
       }
     }

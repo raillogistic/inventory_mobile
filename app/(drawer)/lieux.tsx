@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -25,6 +25,10 @@ type LocationListItemProps = {
   location: Location;
   /** Whether the location is currently selected. */
   isSelected: boolean;
+  /** Whether the card is rendered as a nested child item. */
+  isChild?: boolean;
+  /** Whether to display the parent label under the location name. */
+  showParent?: boolean;
   /** Callback fired when the user selects the location. */
   onSelect: (location: Location) => void;
   /** Card border color derived from theme. */
@@ -39,6 +43,8 @@ type LocationListItemProps = {
 
 /** Limits the number of locations fetched per request. */
 const LOCATION_LIST_LIMIT = 60;
+/** Limits the number of child locations fetched per request. */
+const CHILD_LOCATION_LIMIT = 200;
 
 /**
  * Render a location card for the selection list.
@@ -46,6 +52,8 @@ const LOCATION_LIST_LIMIT = 60;
 function LocationListItem({
   location,
   isSelected,
+  isChild = false,
+  showParent = true,
   onSelect,
   borderColor,
   backgroundColor,
@@ -60,6 +68,7 @@ function LocationListItem({
     <TouchableOpacity
       style={[
         styles.card,
+        isChild ? styles.childCard : null,
         { borderColor, backgroundColor },
         isSelected ? { borderColor: highlightColor } : null,
       ]}
@@ -72,7 +81,7 @@ function LocationListItem({
           <ThemedText type="defaultSemiBold">
             {location.locationname}
           </ThemedText>
-          {location.parent ? (
+          {showParent && location.parent ? (
             <ThemedText style={[styles.cardMeta, { color: mutedColor }]}>
               Parent: {location.parent.locationname}
             </ThemedText>
@@ -109,23 +118,53 @@ export default function LocationSelectionScreen() {
   const [searchText, setSearchText] = useState<string>("");
   const [barcodeText, setBarcodeText] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({});
 
   const groupId = session.group?.id ?? null;
   const selectedLocationId = session.location?.id ?? null;
 
+  const trimmedSearch = searchText.trim();
+  const trimmedBarcode = barcodeText.trim();
+  const shouldShowHierarchy = trimmedSearch.length === 0 && trimmedBarcode.length === 0;
+
   const queryVariables = useMemo<LocationListVariables>(
     () => ({
-      nameContains: searchText.trim() || null,
-      barcode: barcodeText.trim() || null,
+      nameContains: trimmedSearch || null,
+      barcode: trimmedBarcode || null,
+      parentIsNull: shouldShowHierarchy ? true : null,
       limit: LOCATION_LIST_LIMIT,
     }),
-    [barcodeText, searchText]
+    [shouldShowHierarchy, trimmedBarcode, trimmedSearch]
   );
 
   const { locations, loading, errorMessage, refetch } = useLocationList(
     queryVariables,
     { skip: !groupId }
   );
+
+  const parentIds = useMemo(() => {
+    if (!shouldShowHierarchy) {
+      return [];
+    }
+    return locations.map((location) => location.id);
+  }, [locations, shouldShowHierarchy]);
+
+  const childQueryVariables = useMemo<LocationListVariables>(
+    () => ({
+      parentIn: parentIds.length > 0 ? parentIds : null,
+      limit: CHILD_LOCATION_LIMIT,
+    }),
+    [parentIds]
+  );
+
+  const childQuerySkip = !groupId || parentIds.length === 0 || !shouldShowHierarchy;
+
+  const {
+    locations: childLocations,
+    loading: childLoading,
+    errorMessage: childErrorMessage,
+    refetch: refetchChildren,
+  } = useLocationList(childQueryVariables, { skip: childQuerySkip });
 
   const borderColor = useThemeColor({ light: "#E2E8F0", dark: "#2B2E35" }, "icon");
   const surfaceColor = useThemeColor(
@@ -150,6 +189,11 @@ export default function LocationSelectionScreen() {
     setBarcodeText(value);
   }, []);
 
+  /** Clear expanded parents when switching filters or group. */
+  useEffect(() => {
+    setExpandedParents({});
+  }, [groupId, trimmedBarcode, trimmedSearch]);
+
   /** Store the selected location and navigate to the scan screen. */
   const handleSelectLocation = useCallback(
     (location: Location) => {
@@ -167,38 +211,140 @@ export default function LocationSelectionScreen() {
 
   /** Retry location list retrieval after an error. */
   const handleRetry = useCallback(() => {
-    refetch(queryVariables);
-  }, [queryVariables, refetch]);
+    const refreshCalls = [refetch(queryVariables)];
+    if (!childQuerySkip) {
+      refreshCalls.push(refetchChildren(childQueryVariables));
+    }
+    void Promise.all(refreshCalls);
+  }, [childQuerySkip, childQueryVariables, queryVariables, refetch, refetchChildren]);
 
   /** Refresh the location list via pull-to-refresh. */
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await refetch(queryVariables);
+      const refreshCalls = [refetch(queryVariables)];
+      if (!childQuerySkip) {
+        refreshCalls.push(refetchChildren(childQueryVariables));
+      }
+      await Promise.all(refreshCalls);
     } finally {
       setIsRefreshing(false);
     }
-  }, [queryVariables, refetch]);
+  }, [childQuerySkip, childQueryVariables, queryVariables, refetch, refetchChildren]);
 
-  /** Render a single location list row. */
+  /** Toggle the visibility of child locations for a parent. */
+  const handleToggleChildren = useCallback((parentId: string) => {
+    setExpandedParents((current) => ({
+      ...current,
+      [parentId]: !current[parentId],
+    }));
+  }, []);
+
+  /** Group child locations by their parent id. */
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string, Location[]>();
+    for (const child of childLocations) {
+      const parentId = child.parent?.id;
+      if (!parentId) {
+        continue;
+      }
+      if (!map.has(parentId)) {
+        map.set(parentId, []);
+      }
+      map.get(parentId)?.push(child);
+    }
+
+    for (const list of map.values()) {
+      list.sort((a, b) => a.locationname.localeCompare(b.locationname));
+    }
+
+    return map;
+  }, [childLocations]);
+
+  /** Render a single location list row with optional children. */
   const renderItem = useCallback(
-    ({ item }: { item: Location }) => (
-      <LocationListItem
-        location={item}
-        isSelected={item.id === selectedLocationId}
-        onSelect={handleSelectLocation}
-        borderColor={borderColor}
-        backgroundColor={surfaceColor}
-        highlightColor={highlightColor}
-        mutedColor={mutedColor}
-      />
-    ),
+    ({ item }: { item: Location }) => {
+      const children = childrenByParent.get(item.id) ?? [];
+      const hasChildren = shouldShowHierarchy && children.length > 0;
+      const isExpanded = expandedParents[item.id] ?? false;
+      const childCountLabel =
+        children.length === 1 ? "1 sous-lieu" : `${children.length} sous-lieux`;
+
+      return (
+        <View style={styles.locationGroup}>
+          <LocationListItem
+            location={item}
+            isSelected={item.id === selectedLocationId}
+            onSelect={handleSelectLocation}
+            borderColor={borderColor}
+            backgroundColor={surfaceColor}
+            highlightColor={highlightColor}
+            mutedColor={mutedColor}
+          />
+
+          {hasChildren ? (
+            <TouchableOpacity
+              style={[styles.childToggle, { borderColor }]}
+              onPress={() => handleToggleChildren(item.id)}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isExpanded ? "Masquer les sous-lieux" : "Afficher les sous-lieux"
+              }
+            >
+              <ThemedText style={styles.childToggleText}>
+                {isExpanded ? "Masquer les sous-lieux" : `Voir ${childCountLabel}`}
+              </ThemedText>
+            </TouchableOpacity>
+          ) : null}
+
+          {hasChildren && isExpanded ? (
+            <View style={styles.childList}>
+              {childLoading && children.length === 0 ? (
+                <View style={styles.childLoading}>
+                  <ActivityIndicator size="small" color={highlightColor} />
+                  <ThemedText style={[styles.childLoadingText, { color: mutedColor }]}>
+                    Chargement des sous-lieux...
+                  </ThemedText>
+                </View>
+              ) : null}
+
+              {children.map((child) => (
+                <LocationListItem
+                  key={child.id}
+                  location={child}
+                  isSelected={child.id === selectedLocationId}
+                  isChild
+                  showParent={false}
+                  onSelect={handleSelectLocation}
+                  borderColor={borderColor}
+                  backgroundColor={surfaceColor}
+                  highlightColor={highlightColor}
+                  mutedColor={mutedColor}
+                />
+              ))}
+
+              {childErrorMessage ? (
+                <ThemedText style={[styles.childErrorText, { color: mutedColor }]}>
+                  Impossible de charger les sous-lieux.
+                </ThemedText>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      );
+    },
     [
       borderColor,
+      childErrorMessage,
+      childLoading,
+      childrenByParent,
+      expandedParents,
       handleSelectLocation,
+      handleToggleChildren,
       highlightColor,
       mutedColor,
       selectedLocationId,
+      shouldShowHierarchy,
       surfaceColor,
     ]
   );
@@ -206,8 +352,9 @@ export default function LocationSelectionScreen() {
   /** Provide stable keys for the location list. */
   const keyExtractor = useCallback((item: Location) => item.id, []);
 
+  const combinedErrorMessage = errorMessage ?? childErrorMessage ?? null;
   const showInitialLoading = loading && locations.length === 0 && !isRefreshing;
-  const showInlineError = Boolean(errorMessage && locations.length > 0);
+  const showInlineError = Boolean(combinedErrorMessage && locations.length > 0);
 
   /** Render the list header with group context and search. */
   const renderHeader = useCallback(() => {
@@ -290,7 +437,7 @@ export default function LocationSelectionScreen() {
               Impossible de charger les lieux.
             </ThemedText>
             <ThemedText style={[styles.errorMessage, { color: mutedColor }]}>
-              {errorMessage}
+              {combinedErrorMessage}
             </ThemedText>
             <TouchableOpacity
               style={[styles.retryButton, { backgroundColor: highlightColor }]}
@@ -305,7 +452,7 @@ export default function LocationSelectionScreen() {
   }, [
     barcodeText,
     borderColor,
-    errorMessage,
+    combinedErrorMessage,
     handleBarcodeChange,
     handleChangeGroup,
     handleRetry,
@@ -336,14 +483,14 @@ export default function LocationSelectionScreen() {
       );
     }
 
-    if (errorMessage) {
+    if (combinedErrorMessage) {
       return (
         <View style={styles.errorContainer}>
           <ThemedText style={styles.errorTitle}>
             Impossible de charger les lieux.
           </ThemedText>
           <ThemedText style={[styles.errorMessage, { color: mutedColor }]}>
-            {errorMessage}
+            {combinedErrorMessage}
           </ThemedText>
           <TouchableOpacity
             style={[styles.retryButton, { backgroundColor: highlightColor }]}
@@ -364,7 +511,7 @@ export default function LocationSelectionScreen() {
       </View>
     );
   }, [
-    errorMessage,
+    combinedErrorMessage,
     handleRetry,
     highlightColor,
     mutedColor,
@@ -511,11 +658,18 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     gap: 12,
   },
+  locationGroup: {
+    gap: 8,
+  },
   card: {
     borderWidth: 1,
     borderRadius: 14,
     padding: 14,
     gap: 8,
+  },
+  childCard: {
+    marginLeft: 16,
+    padding: 12,
   },
   cardHeader: {
     flexDirection: "row",
@@ -539,6 +693,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#FFFFFF",
     fontWeight: "600",
+  },
+  childToggle: {
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginLeft: 6,
+  },
+  childToggleText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  childList: {
+    gap: 8,
+    marginLeft: 4,
+  },
+  childLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 4,
+    marginLeft: 16,
+  },
+  childLoadingText: {
+    fontSize: 12,
+  },
+  childErrorText: {
+    fontSize: 12,
+    marginLeft: 16,
   },
   missingContainer: {
     flex: 1,

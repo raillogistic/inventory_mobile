@@ -9,10 +9,18 @@ import type { GraphQLError } from "graphql";
 
 import {
   CAMPAGNE_INVENTAIRE_LIST_QUERY,
+  ARTICLE_LOOKUP_QUERY,
+  AFFECTATION_LIST_QUERY,
   CREATE_ENREGISTREMENT_INVENTAIRE_MUTATION,
   ENREGISTREMENT_INVENTAIRE_LIST_QUERY,
   GROUPE_COMPTAGE_LIST_QUERY,
   LOCATION_LIST_QUERY,
+  type AffectationListData,
+  type AffectationListItem,
+  type AffectationListVariables,
+  type ArticleLookup,
+  type ArticleLookupData,
+  type ArticleLookupVariables,
   type CampagneInventaire,
   type CampagneInventaireListData,
   type CampagneInventaireListVariables,
@@ -246,6 +254,100 @@ export function useLocationList(
 
   return {
     locations: result.data?.locations ?? [],
+    loading: result.loading,
+    error: result.error ?? null,
+    errorMessage: getApolloErrorMessage(result.error ?? null),
+    refetch: result.refetch,
+  };
+}
+
+/** Hook state for affectation listing. */
+export type AffectationListState = {
+  /** Affectations returned by the query. */
+  affectations: AffectationListItem[];
+  /** Whether the query is currently loading. */
+  loading: boolean;
+  /** Error returned by Apollo, if any. */
+  error: ApolloError | null;
+  /** Derived error message for display. */
+  errorMessage: string | null;
+  /** Refetch the affectation list with optional variables. */
+  refetch: (
+    variables?: AffectationListVariables
+  ) => Promise<ApolloQueryResult<AffectationListData>>;
+};
+
+/** Options for controlling affectation list queries. */
+export type AffectationListOptions = {
+  /** Skip the query when prerequisites are missing. */
+  skip?: boolean;
+};
+
+/**
+ * Fetch affectations to resolve articles assigned to a location.
+ */
+export function useAffectationList(
+  variables: AffectationListVariables = {},
+  options: AffectationListOptions = {}
+): AffectationListState {
+  const result = useQuery<AffectationListData, AffectationListVariables>(
+    AFFECTATION_LIST_QUERY,
+    {
+      variables,
+      fetchPolicy: "cache-and-network",
+      skip: options.skip,
+    }
+  );
+
+  return {
+    affectations: result.data?.affectations ?? [],
+    loading: result.loading,
+    error: result.error ?? null,
+    errorMessage: getApolloErrorMessage(result.error ?? null),
+    refetch: result.refetch,
+  };
+}
+
+/** Hook state for article lookup by code. */
+export type ArticleLookupState = {
+  /** Articles returned by the lookup query. */
+  articles: ArticleLookup[];
+  /** Whether the query is currently loading. */
+  loading: boolean;
+  /** Error returned by Apollo, if any. */
+  error: ApolloError | null;
+  /** Derived error message for display. */
+  errorMessage: string | null;
+  /** Refetch the article list with optional variables. */
+  refetch: (
+    variables?: ArticleLookupVariables
+  ) => Promise<ApolloQueryResult<ArticleLookupData>>;
+};
+
+/** Options for controlling article lookup queries. */
+export type ArticleLookupOptions = {
+  /** Skip the query when prerequisites are missing. */
+  skip?: boolean;
+};
+
+/**
+ * Resolve article descriptions for scanned codes.
+ */
+export function useArticleLookupByCodes(
+  variables: ArticleLookupVariables,
+  options: ArticleLookupOptions = {}
+): ArticleLookupState {
+  const result = useQuery<ArticleLookupData, ArticleLookupVariables>(
+    ARTICLE_LOOKUP_QUERY,
+    {
+      variables,
+      fetchPolicy: "cache-and-network",
+      skip: options.skip,
+    }
+  );
+
+  return {
+    articles: result.data?.articles ?? [],
     loading: result.loading,
     error: result.error ?? null,
     errorMessage: getApolloErrorMessage(result.error ?? null),

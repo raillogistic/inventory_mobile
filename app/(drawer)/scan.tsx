@@ -8,6 +8,7 @@ import React, {
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -26,12 +27,17 @@ import { ThemedView } from "@/components/themed-view";
 import { useComptageSession } from "@/hooks/use-comptage-session";
 import { useThemeColor } from "@/hooks/use-theme-color";
 import {
+  type ArticleLookup,
+  type ArticleLookupVariables,
+  type AffectationListVariables,
   type EnregistrementInventaireInput,
   type EnregistrementInventaireListItem,
   type EnregistrementInventaireListVariables,
   type EnregistrementInventaireResult,
 } from "@/lib/graphql/inventory-operations";
 import {
+  useAffectationList,
+  useArticleLookupByCodes,
   useCreateEnregistrementInventaire,
   useEnregistrementInventaireList,
 } from "@/lib/graphql/inventory-hooks";
@@ -42,6 +48,10 @@ type RecentScan = {
   id: string | null;
   /** Scanned article code. */
   code: string;
+  /** Optional article description returned by the API. */
+  description: string | null;
+  /** Whether the scanned code matches a known article. */
+  hasArticle: boolean;
   /** Capture timestamp as an ISO string. */
   capturedAt: string;
 };
@@ -54,10 +64,66 @@ type EnregistrementInventaireSummary =
 /** Origin source of the scan capture. */
 type ScanSource = "manual" | "camera";
 
-/** Limits the number of recent scans shown. */
-const RECENT_SCANS_LIMIT = 6;
-/** Cooldown used to avoid duplicate camera scans. */
-const CAMERA_SCAN_LOCK_MS = 1500;
+/** Visual status applied to location article rows. */
+type LocationArticleStatus = "pending" | "scanned" | "missing" | "other";
+
+/** Payload used to render location article rows. */
+type LocationArticleItem = {
+  /** Unique identifier for the row, when available. */
+  id: string | null;
+  /** Article code displayed in the list. */
+  code: string;
+  /** Optional article description. */
+  description: string | null;
+  /** Status used to drive list coloring. */
+  status: LocationArticleStatus;
+  /** Source list for the row. */
+  source: "location" | "extra";
+};
+
+/** Payload used to render the scan detail modal. */
+type ScanDetail = {
+  /** Scanned article code displayed in the modal. */
+  code: string;
+  /** Optional description for the scanned article. */
+  description: string | null;
+  /** Status used to highlight the scanned article. */
+  status: LocationArticleStatus;
+  /** Short label for the scan status. */
+  statusLabel: string;
+  /** Scan timestamp used for the modal subtitle. */
+  capturedAt: string;
+};
+
+/** Layout rectangle used to validate barcode positions. */
+type ScanFrameLayout = {
+  /** Left position relative to the camera preview. */
+  x: number;
+  /** Top position relative to the camera preview. */
+  y: number;
+  /** Width of the scan frame. */
+  width: number;
+  /** Height of the scan frame. */
+  height: number;
+};
+
+/** Limits the number of scans fetched to drive status updates. */
+const SCAN_STATUS_LIMIT = 2000;
+/** Limits the number of location articles fetched per request. */
+const LOCATION_ARTICLE_LIMIT = 2000;
+/** Supported 1D barcode formats for the camera scanner. */
+const BARCODE_TYPES: BarcodeScanningResult["type"][] = [
+  "code128",
+  "code39",
+  "code93",
+  "ean13",
+  "ean8",
+  "itf14",
+  "upc_a",
+  "upc_e",
+  "upc_ean",
+  "codabar",
+];
 
 /**
  * Format a timestamp for display in French locale.
@@ -86,6 +152,8 @@ function buildRecentScan(
   return {
     id: result?.id ?? null,
     code: result?.code_article ?? fallbackCode,
+    description: result?.article?.desc ?? null,
+    hasArticle: Boolean(result?.article),
     capturedAt: result?.capture_le ?? now,
   };
 }
@@ -147,6 +215,49 @@ function normalizeScanCode(value: string): string {
 }
 
 /**
+ * Convert a scan status to a short, human-readable label.
+ */
+function getStatusLabel(status: LocationArticleStatus): string {
+  switch (status) {
+    case "scanned":
+      return "Article du lieu";
+    case "other":
+      return "Article hors lieu";
+    case "missing":
+      return "Article inconnu";
+    default:
+      return "Article en attente";
+  }
+}
+
+/**
+ * Validate that a scanned barcode sits inside the scan frame.
+ */
+function isBarcodeInsideFrame(
+  bounds: BarcodeScanningResult["bounds"] | undefined,
+  frame: ScanFrameLayout | null
+): boolean {
+  if (!bounds || !frame) {
+    return false;
+  }
+
+  const hasOrigin = "origin" in bounds && Boolean(bounds.origin);
+  const hasSize = "size" in bounds && Boolean(bounds.size);
+  if (!hasOrigin || !hasSize) {
+    return false;
+  }
+
+  const centerX = bounds.origin.x + bounds.size.width / 2;
+  const centerY = bounds.origin.y + bounds.size.height / 2;
+  return (
+    centerX >= frame.x &&
+    centerX <= frame.x + frame.width &&
+    centerY >= frame.y &&
+    centerY <= frame.y + frame.height
+  );
+}
+
+/**
  * Scan capture screen for the comptage flow.
  */
 export default function ScanScreen() {
@@ -154,14 +265,17 @@ export default function ScanScreen() {
   const { session, setLocation } = useComptageSession();
   const [codeValue, setCodeValue] = useState<string>("");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [localScans, setLocalScans] = useState<RecentScan[]>([]);
+  const [scanDetail, setScanDetail] = useState<ScanDetail | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isScanLocked, setIsScanLocked] = useState(false);
-  const scanCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [scanFrameLayout, setScanFrameLayout] =
+    useState<ScanFrameLayout | null>(null);
+  const codeInputRef = useRef<TextInput>(null);
   const scanLockRef = useRef(false);
-  const lastCameraScanRef = useRef<{ code: string; at: number } | null>(null);
 
   const campaignId = session.campaign?.id ?? null;
   const groupId = session.group?.id ?? null;
@@ -171,21 +285,36 @@ export default function ScanScreen() {
       campagne: campaignId,
       groupe: groupId,
       lieu: locationId,
-      limit: RECENT_SCANS_LIMIT,
+      limit: SCAN_STATUS_LIMIT,
     }),
     [campaignId, groupId, locationId]
   );
   const scanQuerySkip = !campaignId || !groupId || !locationId;
 
+  const locationArticleVariables = useMemo<AffectationListVariables>(
+    () => ({
+      location: locationId,
+      limit: LOCATION_ARTICLE_LIMIT,
+    }),
+    [locationId]
+  );
+  const locationArticleSkip = !locationId;
+
   const {
     scans: serverScans,
     totalCount: serverCount,
-    loading: scansLoading,
     errorMessage: scansErrorMessage,
     refetch: refetchScans,
   } = useEnregistrementInventaireList(scanQueryVariables, {
     skip: scanQuerySkip,
   });
+
+  const {
+    affectations,
+    loading: locationArticlesLoading,
+    errorMessage: locationArticlesErrorMessage,
+    refetch: refetchLocationArticles,
+  } = useAffectationList(locationArticleVariables, { skip: locationArticleSkip });
 
   const { submit, loading, errorMessage, mutationErrors, ok } =
     useCreateEnregistrementInventaire();
@@ -202,6 +331,14 @@ export default function ScanScreen() {
     { light: "#2563EB", dark: "#60A5FA" },
     "tint"
   );
+  const successBackgroundColor = useThemeColor(
+    { light: "#16A34A", dark: "#22C55E" },
+    "tint"
+  );
+  const warningBackgroundColor = useThemeColor(
+    { light: "#FBBF24", dark: "#F59E0B" },
+    "tint"
+  );
   const mutedColor = useThemeColor(
     { light: "#64748B", dark: "#94A3B8" },
     "icon"
@@ -211,13 +348,32 @@ export default function ScanScreen() {
     { light: "#FFFFFF", dark: "#0F172A" },
     "text"
   );
+  const missingBackgroundColor = useThemeColor(
+    { light: "#DC2626", dark: "#B91C1C" },
+    "tint"
+  );
+  const missingTextColor = "#FFFFFF";
+  const successTextColor = "#FFFFFF";
+  const warningTextColor = useThemeColor(
+    { light: "#1F2937", dark: "#0F172A" },
+    "text"
+  );
   const placeholderColor = useThemeColor(
     { light: "#94A3B8", dark: "#6B7280" },
     "icon"
   );
+  const modalCardColor = useThemeColor(
+    { light: "#FFFFFF", dark: "#1F232B" },
+    "background"
+  );
+  const modalOverlayColor = useThemeColor(
+    { light: "rgba(15, 23, 42, 0.55)", dark: "rgba(15, 23, 42, 0.75)" },
+    "background"
+  );
   const hasCameraPermission = cameraPermission?.granted ?? false;
   const canAskCameraPermission = cameraPermission?.canAskAgain ?? true;
-  const isScanBusy = isScanLocked || loading;
+  const isScanModalVisible = Boolean(scanDetail);
+  const isScanBusy = isScanLocked || loading || isScanModalVisible;
   const isCameraButtonDisabled =
     !hasCameraPermission && !canAskCameraPermission;
   const cameraButtonLabel = hasCameraPermission
@@ -229,7 +385,7 @@ export default function ScanScreen() {
     : "Autorisation bloquee";
   const cameraStatusMessage = hasCameraPermission
     ? isCameraActive
-      ? "Visez un code-barres pour scanner."
+      ? "Mode scan actif."
       : "Activez la camera pour scanner."
     : canAskCameraPermission
     ? "Autorisez la camera pour scanner."
@@ -252,10 +408,155 @@ export default function ScanScreen() {
     }
     return set;
   }, [mergedScans]);
-  const displayedScans = useMemo(
-    () => mergedScans.slice(0, RECENT_SCANS_LIMIT),
-    [mergedScans]
+  const scanCodes = useMemo(() => {
+    const codes = new Set<string>();
+    for (const scan of mergedScans) {
+      const trimmed = scan.code.trim();
+      if (!trimmed) {
+        continue;
+      }
+      codes.add(trimmed);
+      codes.add(trimmed.toUpperCase());
+      codes.add(trimmed.toLowerCase());
+    }
+    return Array.from(codes);
+  }, [mergedScans]);
+  const articleQueryVariables = useMemo<ArticleLookupVariables>(
+    () => ({
+      codes: scanCodes,
+      limit: scanCodes.length || null,
+    }),
+    [scanCodes]
   );
+  const {
+    articles: lookupArticles,
+    errorMessage: articlesErrorMessage,
+  } = useArticleLookupByCodes(articleQueryVariables, {
+    skip: scanCodes.length === 0,
+  });
+  const articleLookup = useMemo(() => {
+    const map = new Map<string, ArticleLookup>();
+    for (const article of lookupArticles) {
+      const normalized = normalizeScanCode(article.code);
+      if (!normalized) {
+        continue;
+      }
+      map.set(normalized, article);
+    }
+    return map;
+  }, [lookupArticles]);
+  const resolvedScans = useMemo(
+    () =>
+      mergedScans.map((scan) => {
+        const normalized = normalizeScanCode(scan.code);
+        const lookup = normalized ? articleLookup.get(normalized) : null;
+        const description = scan.description ?? lookup?.desc ?? null;
+        const hasArticle = scan.hasArticle || Boolean(lookup);
+        return { ...scan, description, hasArticle };
+      }),
+    [articleLookup, mergedScans]
+  );
+  const locationArticles = useMemo(() => {
+    const map = new Map<string, { id: string; code: string; description: string | null }>();
+
+    for (const affectation of affectations) {
+      const article = affectation.article;
+      if (!article) {
+        continue;
+      }
+
+      const normalized = normalizeScanCode(article.code);
+      if (!normalized) {
+        continue;
+      }
+
+      if (!map.has(normalized)) {
+        map.set(normalized, {
+          id: article.id,
+          code: article.code,
+          description: article.desc ?? null,
+        });
+      }
+    }
+
+    const items = Array.from(map.values());
+    items.sort((a, b) => a.code.localeCompare(b.code));
+    return items;
+  }, [affectations]);
+  const locationArticleCodeSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const article of locationArticles) {
+      const normalized = normalizeScanCode(article.code);
+      if (normalized) {
+        set.add(normalized);
+      }
+    }
+    return set;
+  }, [locationArticles]);
+  const locationArticleItems = useMemo<LocationArticleItem[]>(
+    () =>
+      locationArticles.map((article) => {
+        const normalized = normalizeScanCode(article.code);
+        const isScanned = normalized ? existingCodes.has(normalized) : false;
+        return {
+          id: article.id,
+          code: article.code,
+          description: article.description,
+          status: isScanned ? "scanned" : "pending",
+          source: "location",
+        };
+      }),
+    [existingCodes, locationArticles]
+  );
+  const extraScanItems = useMemo<LocationArticleItem[]>(
+    () => {
+      const items: LocationArticleItem[] = [];
+      const seen = new Set<string>();
+
+      for (const scan of resolvedScans) {
+        const normalized = normalizeScanCode(scan.code);
+        if (!normalized || locationArticleCodeSet.has(normalized)) {
+          continue;
+        }
+        if (seen.has(normalized)) {
+          continue;
+        }
+
+        seen.add(normalized);
+        const status: LocationArticleStatus = scan.hasArticle ? "other" : "missing";
+
+        items.push({
+          id: scan.id,
+          code: scan.code,
+          description: scan.description ?? null,
+          status,
+          source: "extra",
+        });
+      }
+
+      return items;
+    },
+    [locationArticleCodeSet, resolvedScans]
+  );
+  const articleListItems = useMemo<LocationArticleItem[]>(
+    () => [...extraScanItems, ...locationArticleItems],
+    [extraScanItems, locationArticleItems]
+  );
+  const scannedLocationCount = useMemo(() => {
+    return locationArticleItems.filter((item) => item.status === "scanned").length;
+  }, [locationArticleItems]);
+  const articleCountLabel = useMemo(() => {
+    if (locationArticleItems.length === 0) {
+      return extraScanItems.length > 0
+        ? `0 article | +${extraScanItems.length} hors lieu`
+        : "0 article";
+    }
+
+    const extraLabel =
+      extraScanItems.length > 0 ? ` | +${extraScanItems.length} hors lieu` : "";
+
+    return `${scannedLocationCount}/${locationArticleItems.length} scannes${extraLabel}`;
+  }, [extraScanItems.length, locationArticleItems.length, scannedLocationCount]);
   const totalScanCount = useMemo(() => {
     if (serverCount !== null) {
       return serverCount + localScans.length;
@@ -263,8 +564,10 @@ export default function ScanScreen() {
 
     return mergedScans.length;
   }, [localScans.length, mergedScans.length, serverCount]);
-  const lastScan = mergedScans[0] ?? null;
-  const showScanLoading = scansLoading && displayedScans.length === 0;
+  const lastScan = resolvedScans[0] ?? null;
+  const showArticleLoading =
+    locationArticlesLoading && articleListItems.length === 0 && !isRefreshing;
+  const cameraOverlayLabel = loading ? "Scan en cours..." : null;
 
   useEffect(() => {
     if (!hasCameraPermission) {
@@ -273,9 +576,18 @@ export default function ScanScreen() {
   }, [hasCameraPermission]);
 
   useEffect(() => {
+    if (!hasCameraPermission || !isCameraActive) {
+      scanLockRef.current = false;
+      setIsScanLocked(false);
+      setScanFrameLayout(null);
+    }
+  }, [hasCameraPermission, isCameraActive]);
+
+  useEffect(() => {
     setLocalScans([]);
+    setScanDetail(null);
+    setInfoMessage(null);
     scanLockRef.current = false;
-    lastCameraScanRef.current = null;
     setIsScanLocked(false);
   }, [campaignId, groupId, locationId]);
 
@@ -298,18 +610,20 @@ export default function ScanScreen() {
     });
   }, [localScans, serverScanItems]);
 
-  useEffect(() => {
-    return () => {
-      if (scanCooldownRef.current) {
-        clearTimeout(scanCooldownRef.current);
-      }
-    };
-  }, []);
-
   /** Update the scanned code input value. */
   const handleCodeChange = useCallback((value: string) => {
     setCodeValue(value.trim());
     setLocalError(null);
+    setInfoMessage(null);
+  }, []);
+
+  /** Close the scan detail modal and prepare for the next scan. */
+  const handleCloseScanModal = useCallback(() => {
+    setScanDetail(null);
+    setLocalError(null);
+    setInfoMessage(null);
+    setCodeValue("");
+    codeInputRef.current?.focus();
   }, []);
 
   /** Trigger a success haptic feedback on supported devices. */
@@ -349,18 +663,34 @@ export default function ScanScreen() {
     setIsRefreshing(true);
     try {
       setLocalError(null);
+      const refreshCalls: Promise<unknown>[] = [];
       if (!scanQuerySkip) {
-        await refetchScans(scanQueryVariables);
+        refreshCalls.push(refetchScans(scanQueryVariables));
       }
+      if (!locationArticleSkip) {
+        refreshCalls.push(refetchLocationArticles(locationArticleVariables));
+      }
+      await Promise.all(refreshCalls);
     } finally {
       setIsRefreshing(false);
     }
-  }, [refetchScans, scanQuerySkip, scanQueryVariables]);
+  }, [
+    locationArticleSkip,
+    locationArticleVariables,
+    refetchLocationArticles,
+    refetchScans,
+    scanQuerySkip,
+    scanQueryVariables,
+  ]);
 
   /** Create the scan record through the API. */
   const submitScan = useCallback(
     async (rawCode: string, source: ScanSource) => {
       if (loading) {
+        return;
+      }
+
+      if (isScanModalVisible) {
         return;
       }
 
@@ -378,11 +708,13 @@ export default function ScanScreen() {
       }
 
       if (existingCodes.has(normalizedCode)) {
-        setLocalError("Code deja enregistre pour ce lieu.");
+        setLocalError(null);
+        setInfoMessage("Code deja scanne pour ce lieu.");
         return;
       }
 
       setLocalError(null);
+      setInfoMessage(null);
 
       const payload: EnregistrementInventaireInput = {
         campagne: campaignId,
@@ -400,9 +732,32 @@ export default function ScanScreen() {
 
       if (response?.create_enregistrementinventaire?.ok) {
         const nextScan = buildRecentScan(created, cleanedCode);
+        const lookup = normalizedCode
+          ? articleLookup.get(normalizedCode)
+          : null;
+        const isInLocation = normalizedCode
+          ? locationArticleCodeSet.has(normalizedCode)
+          : false;
+        const hasKnownArticle = Boolean(created?.article) || Boolean(lookup);
+        const status: LocationArticleStatus = isInLocation
+          ? "scanned"
+          : hasKnownArticle
+          ? "other"
+          : "missing";
+        const statusLabel = getStatusLabel(status);
+        const detailDescription =
+          nextScan.description ?? lookup?.desc ?? null;
+
         setLocalScans((current) => {
           const next = [nextScan, ...current];
-          return next.slice(0, RECENT_SCANS_LIMIT);
+          return next.slice(0, SCAN_STATUS_LIMIT);
+        });
+        setScanDetail({
+          code: cleanedCode,
+          description: detailDescription,
+          status,
+          statusLabel,
+          capturedAt: nextScan.capturedAt,
         });
         setCodeValue("");
         await triggerSuccessHaptic();
@@ -419,9 +774,12 @@ export default function ScanScreen() {
       setLocalError("Le scan n'a pas pu etre enregistre.");
     },
     [
+      articleLookup,
       campaignId,
       existingCodes,
       groupId,
+      isScanModalVisible,
+      locationArticleCodeSet,
       locationId,
       loading,
       refetchScans,
@@ -434,7 +792,13 @@ export default function ScanScreen() {
   /** Handle barcode events from the camera view. */
   const handleBarcodeScanned = useCallback(
     (result: BarcodeScanningResult) => {
-      if (scanLockRef.current || loading) {
+      if (
+        scanLockRef.current ||
+        loading ||
+        isScanModalVisible ||
+        !hasCameraPermission ||
+        !isCameraActive
+      ) {
         return;
       }
 
@@ -444,31 +808,27 @@ export default function ScanScreen() {
         return;
       }
 
-      const now = Date.now();
-      if (
-        lastCameraScanRef.current &&
-        lastCameraScanRef.current.code === normalizedCode &&
-        now - lastCameraScanRef.current.at < CAMERA_SCAN_LOCK_MS
-      ) {
+      if (!isBarcodeInsideFrame(result.bounds, scanFrameLayout)) {
         return;
       }
 
       scanLockRef.current = true;
       setIsScanLocked(true);
       setCodeValue(scannedCode);
-      lastCameraScanRef.current = { code: normalizedCode, at: now };
-      void submitScan(scannedCode, "camera");
-
-      if (scanCooldownRef.current) {
-        clearTimeout(scanCooldownRef.current);
-      }
-
-      scanCooldownRef.current = setTimeout(() => {
+      void (async () => {
+        await submitScan(scannedCode, "camera");
         scanLockRef.current = false;
         setIsScanLocked(false);
-      }, CAMERA_SCAN_LOCK_MS);
+      })();
     },
-    [loading, submitScan]
+    [
+      hasCameraPermission,
+      isCameraActive,
+      isScanModalVisible,
+      loading,
+      scanFrameLayout,
+      submitScan,
+    ]
   );
 
   /** Create the scan record through the API from the manual input. */
@@ -497,34 +857,99 @@ export default function ScanScreen() {
 
     return null;
   }, [errorMessage, localError, mutationErrors, ok]);
+  const infoDisplay = useMemo(() => infoMessage, [infoMessage]);
 
-  /** Derived error message for scan list loading. */
+  /** Derived error message for list loading. */
   const listErrorDisplay = useMemo(() => {
-    return scansErrorMessage ?? null;
-  }, [scansErrorMessage]);
+    const errors: string[] = [];
 
-  /** Provide stable keys for the recent scan list. */
+    if (locationArticlesErrorMessage) {
+      errors.push(`Articles: ${locationArticlesErrorMessage}`);
+    }
+
+    if (scansErrorMessage) {
+      errors.push(`Scans: ${scansErrorMessage}`);
+    }
+
+    if (articlesErrorMessage) {
+      errors.push(`Recherche: ${articlesErrorMessage}`);
+    }
+
+    return errors.length > 0 ? errors.join(" | ") : null;
+  }, [articlesErrorMessage, locationArticlesErrorMessage, scansErrorMessage]);
+
+  /** Provide stable keys for the article list. */
   const keyExtractor = useCallback(
-    (item: RecentScan, index: number) => item.id ?? `${item.code}-${index}`,
+    (item: LocationArticleItem) => `${item.source}-${item.code}`,
     []
   );
 
-  /** Render the recent scans list items. */
+  /** Render the location article list items. */
   const renderItem = useCallback(
-    ({ item }: { item: RecentScan }) => (
-      <View
-        style={[
-          styles.recentCard,
-          { borderColor, backgroundColor: surfaceColor },
-        ]}
-      >
-        <ThemedText type="defaultSemiBold">{item.code}</ThemedText>
-        <ThemedText style={[styles.recentMeta, { color: mutedColor }]}>
-          {formatTimestamp(item.capturedAt)}
-        </ThemedText>
-      </View>
-    ),
-    [borderColor, mutedColor, surfaceColor]
+    ({ item }: { item: LocationArticleItem }) => {
+      const isMissing = item.status === "missing";
+      const isOtherLocation = item.status === "other";
+      const isScanned = item.status === "scanned";
+      const cardBorderColor = isMissing
+        ? missingBackgroundColor
+        : isOtherLocation
+        ? warningBackgroundColor
+        : isScanned
+        ? successBackgroundColor
+        : borderColor;
+      const cardBackgroundColor = isMissing
+        ? missingBackgroundColor
+        : isOtherLocation
+        ? warningBackgroundColor
+        : isScanned
+        ? successBackgroundColor
+        : surfaceColor;
+      const primaryTextColor = isMissing
+        ? missingTextColor
+        : isOtherLocation
+        ? warningTextColor
+        : isScanned
+        ? successTextColor
+        : undefined;
+      const secondaryTextColor = isMissing
+        ? missingTextColor
+        : isOtherLocation
+        ? warningTextColor
+        : isScanned
+        ? successTextColor
+        : mutedColor;
+
+      return (
+        <View
+          style={[
+            styles.recentCard,
+            { borderColor: cardBorderColor, backgroundColor: cardBackgroundColor },
+          ]}
+        >
+          <ThemedText type="defaultSemiBold" style={{ color: primaryTextColor }}>
+            {item.code}
+          </ThemedText>
+          {item.description ? (
+            <ThemedText
+              style={[styles.recentDescription, { color: secondaryTextColor }]}
+            >
+              {item.description}
+            </ThemedText>
+          ) : null}
+        </View>
+      );
+    },
+    [
+      borderColor,
+      missingBackgroundColor,
+      missingTextColor,
+      mutedColor,
+      successBackgroundColor,
+      successTextColor,
+      surfaceColor,
+      warningBackgroundColor,
+      warningTextColor,
+    ]
   );
 
   if (!campaignId || !groupId || !locationId) {
@@ -551,7 +976,7 @@ export default function ScanScreen() {
   return (
     <ThemedView style={styles.container}>
       <FlatList
-        data={displayedScans}
+        data={articleListItems}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
         ListHeaderComponent={
@@ -657,27 +1082,68 @@ export default function ScanScreen() {
               <ThemedText style={[styles.cameraMeta, { color: mutedColor }]}>
                 {cameraStatusMessage}
               </ThemedText>
-
-              {hasCameraPermission && isCameraActive ? (
-                <View style={styles.cameraPreviewWrapper}>
-                  <CameraView
-                    style={styles.cameraPreview}
-                    onBarcodeScanned={handleBarcodeScanned}
-                  />
-                  {isScanBusy ? (
-                    <View style={styles.cameraOverlay}>
-                      <ThemedText
-                        style={[
-                          styles.cameraOverlayText,
-                          { color: buttonTextColor },
-                        ]}
-                      >
-                        Scan en cours...
+              <Modal
+                transparent
+                visible={hasCameraPermission && isCameraActive}
+                animationType="fade"
+                onRequestClose={() => setIsCameraActive(false)}
+              >
+                <View style={styles.cameraModalOverlay}>
+                  <View style={styles.cameraModalContent}>
+                    <View style={styles.cameraModalHeader}>
+                      <ThemedText type="defaultSemiBold">
+                        Mode scan
                       </ThemedText>
+                      <TouchableOpacity
+                        style={[
+                          styles.cameraCloseButton,
+                          { backgroundColor: highlightColor },
+                        ]}
+                        onPress={() => setIsCameraActive(false)}
+                      >
+                        <ThemedText
+                          style={[
+                            styles.cameraCloseButtonText,
+                            { color: buttonTextColor },
+                          ]}
+                        >
+                          Fermer
+                        </ThemedText>
+                      </TouchableOpacity>
                     </View>
-                  ) : null}
+                    <ThemedText style={[styles.cameraHint, { color: mutedColor }]}>
+                      Placez le code-barres dans le cadre pour le scanner.
+                    </ThemedText>
+                    <View style={styles.cameraModalBody}>
+                      <CameraView
+                        style={styles.cameraPreview}
+                        onBarcodeScanned={handleBarcodeScanned}
+                        barcodeScannerSettings={{ barcodeTypes: BARCODE_TYPES }}
+                      />
+                      <View style={styles.scanFrameOverlay} pointerEvents="none">
+                        <View
+                          style={styles.scanFrame}
+                          onLayout={({ nativeEvent }) =>
+                            setScanFrameLayout(nativeEvent.layout)
+                          }
+                        />
+                      </View>
+                      {isScanBusy && cameraOverlayLabel ? (
+                        <View style={styles.cameraOverlay}>
+                          <ThemedText
+                            style={[
+                              styles.cameraOverlayText,
+                              { color: buttonTextColor },
+                            ]}
+                          >
+                            {cameraOverlayLabel}
+                          </ThemedText>
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
                 </View>
-              ) : null}
+              </Modal>
             </View>
 
             <View style={styles.inputContainer}>
@@ -696,11 +1162,13 @@ export default function ScanScreen() {
                 autoCorrect={false}
                 value={codeValue}
                 onChangeText={handleCodeChange}
+                editable={!isScanModalVisible}
+                ref={codeInputRef}
               />
               <TouchableOpacity
                 style={[styles.scanButton, { backgroundColor: highlightColor }]}
                 onPress={handleManualSubmit}
-                disabled={loading}
+                disabled={loading || isScanModalVisible}
                 accessibilityRole="button"
                 accessibilityLabel="Enregistrer le code article"
               >
@@ -729,10 +1197,26 @@ export default function ScanScreen() {
               </View>
             ) : null}
 
+            {infoDisplay ? (
+              <View
+                style={[
+                  styles.infoContainer,
+                  { backgroundColor: surfaceColor, borderColor },
+                ]}
+              >
+                <ThemedText style={styles.infoTitle}>
+                  Code deja scanne
+                </ThemedText>
+                <ThemedText style={[styles.infoMessage, { color: mutedColor }]}>
+                  {infoDisplay}
+                </ThemedText>
+              </View>
+            ) : null}
+
             {listErrorDisplay ? (
               <View style={styles.errorContainer}>
                 <ThemedText style={styles.errorTitle}>
-                  Impossible de charger les scans.
+                  Impossible de charger les articles.
                 </ThemedText>
                 <ThemedText
                   style={[styles.errorMessage, { color: mutedColor }]}
@@ -743,26 +1227,26 @@ export default function ScanScreen() {
             ) : null}
 
             <View style={styles.sectionHeader}>
-              <ThemedText type="subtitle">Derniers scans</ThemedText>
+              <ThemedText type="subtitle">Articles du lieu</ThemedText>
               <ThemedText style={[styles.sectionMeta, { color: mutedColor }]}>
-                {totalScanCount} enregistrement(s)
+                {articleCountLabel}
               </ThemedText>
             </View>
           </View>
         }
         ListEmptyComponent={
-          showScanLoading ? (
+          showArticleLoading ? (
             <View style={styles.emptyContainer}>
               <ActivityIndicator size="large" color={highlightColor} />
               <ThemedText style={[styles.emptyMessage, { color: mutedColor }]}>
-                Chargement des scans...
+                Chargement des articles...
               </ThemedText>
             </View>
           ) : (
             <View style={styles.emptyContainer}>
-              <ThemedText type="subtitle">Aucun scan enregistre</ThemedText>
+              <ThemedText type="subtitle">Aucun article pour ce lieu</ThemedText>
               <ThemedText style={[styles.emptyMessage, { color: mutedColor }]}>
-                Scannez un premier article pour demarrer.
+                Verifiez les affectations ou contactez l'administrateur.
               </ThemedText>
             </View>
           )
@@ -773,6 +1257,95 @@ export default function ScanScreen() {
         onRefresh={handleRefresh}
         alwaysBounceVertical
       />
+      <Modal
+        transparent
+        visible={isScanModalVisible}
+        animationType="fade"
+        onRequestClose={handleCloseScanModal}
+      >
+        <View style={[styles.modalOverlay, { backgroundColor: modalOverlayColor }]}>
+          {scanDetail ? (
+            <View
+              style={[
+                styles.modalCard,
+                {
+                  backgroundColor: modalCardColor,
+                  borderColor:
+                    scanDetail.status === "missing"
+                      ? missingBackgroundColor
+                      : scanDetail.status === "other"
+                      ? warningBackgroundColor
+                      : scanDetail.status === "scanned"
+                      ? successBackgroundColor
+                      : borderColor,
+                },
+              ]}
+            >
+              <View style={styles.modalContent}>
+                <View
+                  style={[
+                    styles.modalStatusBadge,
+                    {
+                      backgroundColor:
+                        scanDetail.status === "missing"
+                          ? missingBackgroundColor
+                          : scanDetail.status === "other"
+                          ? warningBackgroundColor
+                          : scanDetail.status === "scanned"
+                          ? successBackgroundColor
+                          : borderColor,
+                    },
+                  ]}
+                >
+                  <ThemedText
+                    style={[
+                      styles.modalStatusText,
+                      {
+                        color:
+                          scanDetail.status === "missing"
+                            ? missingTextColor
+                            : scanDetail.status === "other"
+                            ? warningTextColor
+                            : scanDetail.status === "scanned"
+                            ? successTextColor
+                            : mutedColor,
+                      },
+                    ]}
+                  >
+                    {scanDetail.statusLabel}
+                  </ThemedText>
+                </View>
+                <ThemedText type="title" style={styles.modalCodeText}>
+                  {scanDetail.code}
+                </ThemedText>
+                {scanDetail.description ? (
+                  <ThemedText style={styles.modalDescription}>
+                    {scanDetail.description}
+                  </ThemedText>
+                ) : (
+                  <ThemedText
+                    style={[styles.modalDescription, { color: mutedColor }]}
+                  >
+                    Description inconnue
+                  </ThemedText>
+                )}
+                <ThemedText style={[styles.modalMeta, { color: mutedColor }]}>
+                  Scanne a {formatTimestamp(scanDetail.capturedAt)}
+                </ThemedText>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: highlightColor }]}
+                onPress={handleCloseScanModal}
+              >
+                <ThemedText style={styles.modalButtonText}>
+                  Scanner suivant
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -845,13 +1418,44 @@ const styles = StyleSheet.create({
   cameraMeta: {
     fontSize: 13,
   },
-  cameraPreviewWrapper: {
+  cameraPreview: {
+    height: "100%",
+    width: "100%",
+  },
+  cameraModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.9)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  cameraModalContent: {
+    borderRadius: 16,
+    backgroundColor: "#0F172A",
+    padding: 16,
+    gap: 12,
+  },
+  cameraModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  cameraCloseButton: {
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  cameraCloseButtonText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  cameraHint: {
+    fontSize: 13,
+  },
+  cameraModalBody: {
     borderRadius: 12,
     overflow: "hidden",
-  },
-  cameraPreview: {
-    height: 160,
-    width: "100%",
+    height: 420,
   },
   cameraOverlay: {
     position: "absolute",
@@ -866,6 +1470,22 @@ const styles = StyleSheet.create({
   cameraOverlayText: {
     fontSize: 14,
     fontWeight: "600",
+  },
+  scanFrameOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scanFrame: {
+    width: "80%",
+    height: "28%",
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    borderRadius: 12,
   },
   contextMeta: {
     fontSize: 13,
@@ -912,11 +1532,25 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4,
   },
+  infoContainer: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+    gap: 8,
+    marginTop: 4,
+  },
   errorTitle: {
     fontSize: 16,
     fontWeight: "600",
   },
   errorMessage: {
+    fontSize: 14,
+  },
+  infoTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  infoMessage: {
     fontSize: 14,
   },
   sectionHeader: {
@@ -939,6 +1573,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     gap: 6,
+  },
+  recentDescription: {
+    fontSize: 13,
   },
   recentMeta: {
     fontSize: 12,
@@ -971,6 +1608,53 @@ const styles = StyleSheet.create({
   },
   retryButtonText: {
     fontSize: 15,
+    fontWeight: "600",
+    color: "#FFFFFF",
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
+  },
+  modalCard: {
+    borderWidth: 2,
+    borderRadius: 20,
+    padding: 24,
+    minHeight: "70%",
+    justifyContent: "space-between",
+    gap: 16,
+  },
+  modalContent: {
+    alignItems: "center",
+    gap: 12,
+  },
+  modalStatusBadge: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  modalStatusText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  modalCodeText: {
+    textAlign: "center",
+  },
+  modalDescription: {
+    fontSize: 18,
+    textAlign: "center",
+  },
+  modalMeta: {
+    fontSize: 14,
+    textAlign: "center",
+  },
+  modalButton: {
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  modalButtonText: {
+    fontSize: 16,
     fontWeight: "600",
     color: "#FFFFFF",
   },
