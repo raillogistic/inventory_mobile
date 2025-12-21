@@ -199,10 +199,8 @@ export function InventoryOfflineProvider({
         lastSyncAt: new Date().toISOString(),
       };
 
-      await Promise.all([
-        saveInventoryOfflineCache(nextCache),
-        saveInventoryOfflineMetadata(nextMetadata),
-      ]);
+      await saveInventoryOfflineCache(nextCache);
+      await saveInventoryOfflineMetadata(nextMetadata);
 
       setCache(nextCache);
       setMetadata(nextMetadata);

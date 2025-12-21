@@ -16,12 +16,9 @@ import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { useComptageSession } from "@/hooks/use-comptage-session";
+import { useInventoryOffline } from "@/hooks/use-inventory-offline";
 import { useThemeColor } from "@/hooks/use-theme-color";
-import {
-  type GroupeComptage,
-  type GroupeComptageListVariables,
-} from "@/lib/graphql/inventory-operations";
-import { useGroupeComptageList } from "@/lib/graphql/inventory-hooks";
+import { type GroupeComptage } from "@/lib/graphql/inventory-operations";
 
 /** Props for a comptage group list item. */
 type GroupeListItemProps = {
@@ -46,6 +43,38 @@ const GROUPE_LIST_LIMIT = 50;
 
 /** Number of digits required for the group PIN. */
 const PIN_LENGTH = 4;
+
+/**
+ * Normalize a search value for case-insensitive matching.
+ */
+function normalizeSearchValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
+ * Filter and sort groups based on search and campaign selection.
+ */
+function filterGroups(
+  groups: GroupeComptage[],
+  searchValue: string,
+  campaignId: string | null
+): GroupeComptage[] {
+  if (!campaignId) {
+    return [];
+  }
+
+  const normalizedSearch = normalizeSearchValue(searchValue);
+  const filtered = groups.filter((group) => group.campagne.id === campaignId);
+  const searched = normalizedSearch
+    ? filtered.filter((group) =>
+        group.nom.toLowerCase().includes(normalizedSearch)
+      )
+    : filtered;
+
+  return [...searched]
+    .sort((a, b) => a.nom.localeCompare(b.nom))
+    .slice(0, GROUPE_LIST_LIMIT);
+}
 
 /** Props for the PIN code input UI. */
 type PinCodeInputProps = {
@@ -190,6 +219,8 @@ function GroupeListItem({
 export default function GroupSelectionScreen() {
   const router = useRouter();
   const { session, setCampaign, setGroup } = useComptageSession();
+  const { cache, isHydrated, isSyncing, syncError, syncAll } =
+    useInventoryOffline();
   const [searchText, setSearchText] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pinPromptGroup, setPinPromptGroup] = useState<GroupeComptage | null>(null);
@@ -200,19 +231,13 @@ export default function GroupSelectionScreen() {
   const campaignId = session.campaign?.id ?? null;
   const selectedGroupId = session.group?.id ?? null;
 
-  const queryVariables = useMemo<GroupeComptageListVariables>(
-    () => ({
-      campagne: campaignId,
-      nameContains: searchText.trim() || null,
-      limit: GROUPE_LIST_LIMIT,
-    }),
-    [campaignId, searchText]
+  const groups = useMemo(
+    () => filterGroups(cache.groups, searchText, campaignId),
+    [cache.groups, searchText, campaignId]
   );
-
-  const { groups, loading, errorMessage, refetch } = useGroupeComptageList(
-    queryVariables,
-    { skip: !campaignId }
-  );
+  const hasGroups = cache.groups.length > 0;
+  const isLoading = !isHydrated || (isSyncing && !hasGroups);
+  const errorMessage = syncError;
 
   const borderColor = useThemeColor({ light: "#E2E8F0", dark: "#2B2E35" }, "icon");
   const surfaceColor = useThemeColor(
@@ -290,18 +315,18 @@ export default function GroupSelectionScreen() {
 
   /** Retry group list retrieval after an error. */
   const handleRetry = useCallback(() => {
-    refetch(queryVariables);
-  }, [queryVariables, refetch]);
+    void syncAll();
+  }, [syncAll]);
 
   /** Refresh the group list via pull-to-refresh. */
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await refetch(queryVariables);
+      await syncAll();
     } finally {
       setIsRefreshing(false);
     }
-  }, [queryVariables, refetch]);
+  }, [syncAll]);
 
   /** Update the PIN input value. */
   const handlePinChange = useCallback((value: string) => {
@@ -405,7 +430,7 @@ export default function GroupSelectionScreen() {
   /** Provide stable keys for the group list. */
   const keyExtractor = useCallback((item: GroupeComptage) => item.id, []);
 
-  const showInitialLoading = loading && groups.length === 0 && !isRefreshing;
+  const showInitialLoading = isLoading && groups.length === 0 && !isRefreshing;
   const showInlineError = Boolean(errorMessage && groups.length > 0);
 
   /** Render the list header with campaign context and search. */

@@ -13,12 +13,9 @@ import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useComptageSession } from "@/hooks/use-comptage-session";
+import { useInventoryOffline } from "@/hooks/use-inventory-offline";
 import { useThemeColor } from "@/hooks/use-theme-color";
-import {
-  type Location,
-  type LocationListVariables,
-} from "@/lib/graphql/inventory-operations";
-import { useLocationList } from "@/lib/graphql/inventory-hooks";
+import { type Location } from "@/lib/graphql/inventory-operations";
 
 /** Props for a location list item. */
 type LocationListItemProps = {
@@ -40,8 +37,70 @@ type LocationListItemProps = {
 
 /** Limits the number of locations fetched per request. */
 const LOCATION_LIST_LIMIT = 80;
-/** Limits the number of child locations fetched per request. */
-const CHILD_LOCATION_LIMIT = 200;
+
+/**
+ * Normalize a search value for case-insensitive matching.
+ */
+function normalizeSearchValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
+ * Build a set of authorized location ids from the selected group.
+ */
+function buildAuthorizedLocationIdSet(
+  locations: Location[] | null | undefined
+): Set<string> {
+  const ids = new Set<string>();
+
+  for (const location of locations ?? []) {
+    ids.add(location.id);
+  }
+
+  return ids;
+}
+
+/**
+ * Filter locations for the current hierarchy level and search input.
+ */
+function filterLocationsForLevel(
+  locations: Location[],
+  parentId: string | null,
+  searchValue: string,
+  barcodeValue: string
+): Location[] {
+  const normalizedSearch = normalizeSearchValue(searchValue);
+  const trimmedBarcode = barcodeValue.trim();
+
+  const filtered = locations.filter((location) => {
+    const matchesParent = parentId
+      ? location.parent?.id === parentId
+      : !location.parent;
+    if (!matchesParent) {
+      return false;
+    }
+
+    if (trimmedBarcode) {
+      const barcode = location.barcode?.trim() ?? "";
+      if (barcode !== trimmedBarcode) {
+        return false;
+      }
+    }
+
+    if (normalizedSearch) {
+      const name = location.locationname.toLowerCase();
+      if (!name.includes(normalizedSearch)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  return filtered
+    .sort((a, b) => a.locationname.localeCompare(b.locationname))
+    .slice(0, LOCATION_LIST_LIMIT);
+}
 
 /**
  * Render a location card for the selection list.
@@ -254,54 +313,43 @@ export function LocationLevelScreen({
 }: LocationLevelScreenProps) {
   const router = useRouter();
   const { session, setGroup, setLocation } = useComptageSession();
+  const { cache, isHydrated, isSyncing, syncError, syncAll } =
+    useInventoryOffline();
   const [searchText, setSearchText] = useState<string>("");
   const [barcodeText, setBarcodeText] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const groupId = session.group?.id ?? null;
   const parentId = parentLocation?.id ?? null;
-  const trimmedSearch = searchText.trim();
-  const trimmedBarcode = barcodeText.trim();
 
-  const queryVariables = useMemo<LocationListVariables>(
-    () => ({
-      nameContains: trimmedSearch || null,
-      barcode: trimmedBarcode || null,
-      parent: parentId ?? null,
-      parentIsNull: parentId ? null : true,
-      forGroup: groupId,
-      limit: LOCATION_LIST_LIMIT,
-    }),
-    [groupId, parentId, trimmedBarcode, trimmedSearch]
+  const authorizedLocationIds = useMemo(
+    () => buildAuthorizedLocationIdSet(session.group?.lieux_autorises),
+    [session.group?.lieux_autorises]
   );
 
-  const { locations, loading, errorMessage, refetch } = useLocationList(
-    queryVariables,
-    { skip: !groupId }
+  const authorizedLocations = useMemo(() => {
+    if (!groupId) {
+      return [];
+    }
+
+    return cache.locations.filter((location) =>
+      authorizedLocationIds.has(location.id)
+    );
+  }, [authorizedLocationIds, cache.locations, groupId]);
+
+  const locations = useMemo(
+    () =>
+      filterLocationsForLevel(
+        authorizedLocations,
+        parentId,
+        searchText,
+        barcodeText
+      ),
+    [authorizedLocations, barcodeText, parentId, searchText]
   );
-
-  const parentIds = useMemo(
-    () => locations.map((location) => location.id),
-    [locations]
-  );
-
-  const childQueryVariables = useMemo<LocationListVariables>(
-    () => ({
-      parentIn: parentIds.length > 0 ? parentIds : null,
-      forGroup: groupId,
-      limit: CHILD_LOCATION_LIMIT,
-    }),
-    [groupId, parentIds]
-  );
-
-  const childQuerySkip = !groupId || parentIds.length === 0;
-
-  const {
-    locations: childLocations,
-    loading: childLoading,
-    errorMessage: childErrorMessage,
-    refetch: refetchChildren,
-  } = useLocationList(childQueryVariables, { skip: childQuerySkip });
+  const hasLocations = authorizedLocations.length > 0;
+  const isLoading = !isHydrated || (isSyncing && !hasLocations);
+  const errorMessage = syncError;
 
   const borderColor = useThemeColor(
     { light: "#E2E8F0", dark: "#2B2E35" },
@@ -408,50 +456,36 @@ export function LocationLevelScreen({
 
   /** Retry location list retrieval after an error. */
   const handleRetry = useCallback(() => {
-    const refreshCalls = [refetch(queryVariables)];
-    if (!childQuerySkip) {
-      refreshCalls.push(refetchChildren(childQueryVariables));
-    }
-    void Promise.all(refreshCalls);
-  }, [
-    childQuerySkip,
-    childQueryVariables,
-    queryVariables,
-    refetch,
-    refetchChildren,
-  ]);
+    void syncAll();
+  }, [syncAll]);
 
   /** Refresh the location list via pull-to-refresh. */
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const refreshCalls = [refetch(queryVariables)];
-      if (!childQuerySkip) {
-        refreshCalls.push(refetchChildren(childQueryVariables));
-      }
-      await Promise.all(refreshCalls);
+      await syncAll();
     } finally {
       setIsRefreshing(false);
     }
-  }, [
-    childQuerySkip,
-    childQueryVariables,
-    queryVariables,
-    refetch,
-    refetchChildren,
-  ]);
+  }, [syncAll]);
 
   /** Build a lookup of location ids that have children. */
   const hasChildrenById = useMemo(() => {
     const map = new Map<string, boolean>();
-    for (const child of childLocations) {
+    if (locations.length === 0) {
+      return map;
+    }
+
+    const parentIds = new Set<string>(locations.map((location) => location.id));
+
+    for (const child of authorizedLocations) {
       const parentIdValue = child.parent?.id;
-      if (parentIdValue) {
+      if (parentIdValue && parentIds.has(parentIdValue)) {
         map.set(parentIdValue, true);
       }
     }
     return map;
-  }, [childLocations]);
+  }, [authorizedLocations, locations]);
 
   /** Render a single location list row with child hint. */
   const renderItem = useCallback(
@@ -482,8 +516,7 @@ export function LocationLevelScreen({
   /** Provide stable keys for the location list. */
   const keyExtractor = useCallback((item: Location) => item.id, []);
 
-  const combinedErrorMessage = errorMessage ?? childErrorMessage ?? null;
-  const showInitialLoading = loading && locations.length === 0 && !isRefreshing;
+  const showInitialLoading = isLoading && locations.length === 0 && !isRefreshing;
 
   const headerElement = useMemo(
     () => (
@@ -537,14 +570,14 @@ export function LocationLevelScreen({
       );
     }
 
-    if (combinedErrorMessage) {
+    if (errorMessage) {
       return (
         <View style={styles.errorContainer}>
           <ThemedText style={styles.errorTitle}>
             Impossible de charger les lieux.
           </ThemedText>
           <ThemedText style={[styles.errorMessage, { color: mutedColor }]}>
-            {combinedErrorMessage}
+            {errorMessage}
           </ThemedText>
           <TouchableOpacity
             style={[styles.retryButton, { backgroundColor: highlightColor }]}
@@ -565,7 +598,7 @@ export function LocationLevelScreen({
       </View>
     );
   }, [
-    combinedErrorMessage,
+    errorMessage,
     handleRetry,
     highlightColor,
     mutedColor,

@@ -12,12 +12,9 @@ import { useRouter } from "expo-router";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { useComptageSession } from "@/hooks/use-comptage-session";
+import { useInventoryOffline } from "@/hooks/use-inventory-offline";
 import { useThemeColor } from "@/hooks/use-theme-color";
-import {
-  type CampagneInventaire,
-  type CampagneInventaireListVariables,
-} from "@/lib/graphql/inventory-operations";
-import { useCampagneInventaireList } from "@/lib/graphql/inventory-hooks";
+import { type CampagneInventaire } from "@/lib/graphql/inventory-operations";
 
 /** Props for a single campaign list item. */
 type CampagneListItemProps = {
@@ -39,6 +36,32 @@ type CampagneListItemProps = {
 
 /** Limits the number of campaigns fetched per request. */
 const CAMPAIGN_LIST_LIMIT = 50;
+
+/**
+ * Normalize a search value for case-insensitive matching.
+ */
+function normalizeSearchValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
+ * Filter and sort campaigns based on the current search value.
+ */
+function filterCampaigns(
+  campaigns: CampagneInventaire[],
+  searchValue: string
+): CampagneInventaire[] {
+  const normalizedSearch = normalizeSearchValue(searchValue);
+  const filtered = normalizedSearch
+    ? campaigns.filter((campaign) =>
+        campaign.nom.toLowerCase().includes(normalizedSearch)
+      )
+    : campaigns;
+
+  return [...filtered]
+    .sort((a, b) => a.nom.localeCompare(b.nom))
+    .slice(0, CAMPAIGN_LIST_LIMIT);
+}
 
 /**
  * Format a date string (YYYY-MM-DD) using a French locale.
@@ -142,20 +165,19 @@ function CampagneListItem({
 export default function CampaignSelectionScreen() {
   const router = useRouter();
   const { session, setCampaign } = useComptageSession();
+  const { cache, isHydrated, isSyncing, syncError, syncAll } =
+    useInventoryOffline();
   const [searchText, setSearchText] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const selectedCampaignId = session.campaign?.id ?? null;
 
-  const queryVariables = useMemo<CampagneInventaireListVariables>(
-    () => ({
-      nameContains: searchText.trim() || null,
-      limit: CAMPAIGN_LIST_LIMIT,
-    }),
-    [searchText]
+  const campaigns = useMemo(
+    () => filterCampaigns(cache.campaigns, searchText),
+    [cache.campaigns, searchText]
   );
-
-  const { campaigns, loading, errorMessage, refetch } =
-    useCampagneInventaireList(queryVariables);
+  const hasCampaigns = cache.campaigns.length > 0;
+  const isLoading = !isHydrated || (isSyncing && !hasCampaigns);
+  const errorMessage = syncError;
 
   const borderColor = useThemeColor(
     { light: "#E2E8F0", dark: "#2B2E35" },
@@ -195,18 +217,18 @@ export default function CampaignSelectionScreen() {
 
   /** Retry campaign list retrieval after an error. */
   const handleRetry = useCallback(() => {
-    refetch(queryVariables);
-  }, [queryVariables, refetch]);
+    void syncAll();
+  }, [syncAll]);
 
   /** Refresh the campaign list via pull-to-refresh. */
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await refetch(queryVariables);
+      await syncAll();
     } finally {
       setIsRefreshing(false);
     }
-  }, [queryVariables, refetch]);
+  }, [syncAll]);
 
   /** Render a single campaign list row. */
   const renderItem = useCallback(
@@ -234,7 +256,7 @@ export default function CampaignSelectionScreen() {
   /** Provide stable keys for the campaign list. */
   const keyExtractor = useCallback((item: CampagneInventaire) => item.id, []);
 
-  const showInitialLoading = loading && campaigns.length === 0 && !isRefreshing;
+  const showInitialLoading = isLoading && campaigns.length === 0 && !isRefreshing;
   const showInlineError = Boolean(errorMessage && campaigns.length > 0);
 
   /** Render the list header with search and selection context. */
