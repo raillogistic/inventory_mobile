@@ -75,6 +75,12 @@ export default function DrawerLayout() {
           title: "Scan",
         }}
       />
+      <Drawer.Screen
+        name="history"
+        options={{
+          title: "Historique",
+        }}
+      />
     </Drawer>
   );
 }

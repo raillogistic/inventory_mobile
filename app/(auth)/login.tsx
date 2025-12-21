@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -11,6 +11,8 @@ import {
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
+import { useRouter } from "expo-router";
+
 import { useAuth } from "@/hooks/use-auth";
 import { useThemeColor } from "@/hooks/use-theme-color";
 
@@ -144,15 +146,12 @@ async function checkAuthEndpoint(url: string): Promise<EndpointCheckResult> {
  * Authentication screen that allows users to sign in.
  */
 export default function LoginScreen() {
-  const { authUrl, serverConfig, setAuthSession, updateServerConfig } =
-    useAuth();
+  const router = useRouter();
+  const { authUrl, setAuthSession } = useAuth();
   const [formState, setFormState] = useState<LoginFormState>({
     username: "g1",
     password: "it-2017***",
   });
-  const [serverHost, setServerHost] = useState(serverConfig.host);
-  const [serverPort, setServerPort] = useState(serverConfig.port);
-  const [showServerSettings, setShowServerSettings] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -167,10 +166,6 @@ export default function LoginScreen() {
     { light: "#94A3B8", dark: "#6B7280" },
     "icon"
   );
-  const surfaceColor = useThemeColor(
-    { light: "#F8FAFC", dark: "#1F232B" },
-    "background"
-  );
   const errorColor = useThemeColor(
     { light: "#DC2626", dark: "#F87171" },
     "text"
@@ -179,14 +174,6 @@ export default function LoginScreen() {
     { light: "#ffffff", dark: "#11181C" },
     "text"
   );
-
-  /** Sync local server inputs with the persisted server config. */
-  const syncServerInputs = useCallback(() => {
-    setServerHost(serverConfig.host);
-    setServerPort(serverConfig.port);
-  }, [serverConfig.host, serverConfig.port]);
-
-  useEffect(syncServerInputs, [syncServerInputs]);
 
   /** Update the username field value. */
   const handleUsernameChange = useCallback((value: string) => {
@@ -198,32 +185,10 @@ export default function LoginScreen() {
     setFormState((current) => ({ ...current, password: value }));
   }, []);
 
-  /** Toggle visibility of the server settings panel. */
-  const handleToggleServerSettings = useCallback(() => {
-    setShowServerSettings((current) => !current);
-  }, []);
-
-  /** Update the host value for the auth server. */
-  const handleServerHostChange = useCallback((value: string) => {
-    setServerHost(value);
-  }, []);
-
-  /** Update the port value for the auth server. */
-  const handleServerPortChange = useCallback((value: string) => {
-    setServerPort(value.replace(/[^0-9]/g, ""));
-  }, []);
-
-  /** Persist the current auth server configuration. */
-  const handleApplyServerSettings = useCallback(async () => {
-    const nextConfig = {
-      ...serverConfig,
-      host: serverHost.trim() || serverConfig.host,
-      port: serverPort.trim() || serverConfig.port,
-    };
-
-    await updateServerConfig(nextConfig);
-    setShowServerSettings(false);
-  }, [serverConfig, serverHost, serverPort, updateServerConfig]);
+  /** Navigate to the server configuration screen. */
+  const handleOpenServerSettings = useCallback(() => {
+    router.push("/(auth)/server");
+  }, [router]);
 
   /** Submit the token auth mutation and persist the auth session. */
   const handleLogin = useCallback(async () => {
@@ -289,58 +254,14 @@ export default function LoginScreen() {
             <ThemedText>Utilisez votre compte pour continuer.</ThemedText>
           </View>
           <TouchableOpacity
-            onPress={handleToggleServerSettings}
+            onPress={handleOpenServerSettings}
             accessibilityLabel="Modifier le serveur d'authentification"
+            style={[styles.serverToggle, { borderColor }]}
           >
-            <IconSymbol name="gearshape.fill" size={22} color={tintColor} />
+            <IconSymbol name="gearshape.fill" size={18} color={tintColor} />
+            <ThemedText style={styles.serverToggleText}>Serveur</ThemedText>
           </TouchableOpacity>
         </View>
-
-        {showServerSettings ? (
-          <ThemedView
-            style={[
-              styles.serverCard,
-              { borderColor, backgroundColor: surfaceColor },
-            ]}
-          >
-            <View style={styles.serverHeader}>
-              <ThemedText type="subtitle">
-                Serveur d'authentification
-              </ThemedText>
-              <TouchableOpacity onPress={handleApplyServerSettings}>
-                <ThemedText type="defaultSemiBold">Appliquer</ThemedText>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.serverRow}>
-              <View style={styles.serverColumn}>
-                <ThemedText style={styles.serverLabel}>Hote</ThemedText>
-                <TextInput
-                  style={[styles.input, { borderColor, color: textColor }]}
-                  placeholder="localhost"
-                  placeholderTextColor={placeholderColor}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  value={serverHost}
-                  onChangeText={handleServerHostChange}
-                />
-              </View>
-              <View style={styles.serverColumn}>
-                <ThemedText style={styles.serverLabel}>Port</ThemedText>
-                <TextInput
-                  style={[styles.input, { borderColor, color: textColor }]}
-                  placeholder="8000"
-                  placeholderTextColor={placeholderColor}
-                  keyboardType="number-pad"
-                  value={serverPort}
-                  onChangeText={handleServerPortChange}
-                />
-              </View>
-            </View>
-            <ThemedText style={styles.endpointText}>
-              Point de terminaison : {authUrl}
-            </ThemedText>
-          </ThemedView>
-        ) : null}
 
         <View style={styles.form}>
           <View>
@@ -410,6 +331,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 24,
   },
+  serverToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  serverToggleText: {
+    fontSize: 13,
+  },
   form: {
     gap: 16,
   },
@@ -438,31 +371,5 @@ const styles = StyleSheet.create({
   },
   errorText: {
     marginTop: 4,
-  },
-  serverCard: {
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 24,
-  },
-  serverHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  serverRow: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  serverColumn: {
-    flex: 1,
-  },
-  serverLabel: {
-    marginBottom: 6,
-  },
-  endpointText: {
-    marginTop: 12,
-    fontSize: 12,
   },
 });
