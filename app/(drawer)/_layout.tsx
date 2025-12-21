@@ -7,8 +7,17 @@ import {
   DrawerItemList,
 } from "@react-navigation/drawer";
 import { useRouter } from "expo-router";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  StyleSheet,
+  ToastAndroid,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
+import { ThemedText } from "@/components/themed-text";
 import { useAuth } from "@/hooks/use-auth";
 import { useInventoryOffline } from "@/hooks/use-inventory-offline";
 import { useThemeColor } from "@/hooks/use-theme-color";
@@ -18,11 +27,12 @@ import { useThemeColor } from "@/hooks/use-theme-color";
  */
 export default function DrawerLayout() {
   const { clearAuthSession } = useAuth();
-  const { isHydrated, isSyncing } = useInventoryOffline();
+  const { isHydrated, isScanSyncing, isSyncing, syncScans } =
+    useInventoryOffline();
   const router = useRouter();
   const tintColor = useThemeColor({}, "tint");
   const textColor = useThemeColor({}, "text");
-  const shouldShowSyncIndicator = !isHydrated || isSyncing;
+  const shouldShowSyncIndicator = !isHydrated || isSyncing || isScanSyncing;
 
   /** Clear auth tokens and return to the login screen. */
   const handleLogout = useCallback(async () => {
@@ -30,18 +40,70 @@ export default function DrawerLayout() {
     router.replace("/(auth)/login");
   }, [clearAuthSession, router]);
 
-  /** Render a header indicator while inventory data is loading. */
-  const renderHeaderSyncIndicator = useCallback(() => {
-    if (!shouldShowSyncIndicator) {
-      return null;
+  /** Display a toast or alert message for sync feedback. */
+  const showSyncMessage = useCallback((message: string) => {
+    if (Platform.OS === "android") {
+      ToastAndroid.show(message, ToastAndroid.SHORT);
+      return;
     }
 
+    Alert.alert("Synchronisation", message);
+  }, []);
+
+  /** Upload pending scan records to the backend. */
+  const handleSyncScans = useCallback(async () => {
+    if (isScanSyncing) {
+      return;
+    }
+
+    try {
+      const summary = await syncScans();
+      if (summary.totalCount === 0) {
+        showSyncMessage("Aucun scan a synchroniser.");
+        return;
+      }
+
+      if (summary.failedCount === 0) {
+        showSyncMessage(`${summary.syncedCount} scan(s) synchronises.`);
+        return;
+      }
+
+      showSyncMessage(
+        `${summary.syncedCount}/${summary.totalCount} scans synchronises.`
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "La synchronisation des scans a echoue.";
+      showSyncMessage(message);
+    }
+  }, [isScanSyncing, showSyncMessage, syncScans]);
+
+  /** Render header actions for sync status and manual sync. */
+  const renderHeaderActions = useCallback(() => {
     return (
-      <View style={styles.headerIndicator}>
-        <ActivityIndicator size="small" color={tintColor} />
+      <View style={styles.headerActions}>
+        {shouldShowSyncIndicator ? (
+          <ActivityIndicator size="small" color={tintColor} />
+        ) : null}
+        <TouchableOpacity
+          style={[
+            styles.syncButton,
+            { borderColor: tintColor, opacity: isScanSyncing ? 0.6 : 1 },
+          ]}
+          onPress={handleSyncScans}
+          disabled={isScanSyncing}
+          accessibilityRole="button"
+          accessibilityLabel="Synchroniser les scans"
+        >
+          <ThemedText style={[styles.syncButtonText, { color: tintColor }]}>
+            {isScanSyncing ? "Sync..." : "Sync"}
+          </ThemedText>
+        </TouchableOpacity>
       </View>
     );
-  }, [shouldShowSyncIndicator, tintColor]);
+  }, [handleSyncScans, isScanSyncing, shouldShowSyncIndicator, tintColor]);
 
   /** Render the drawer content with an explicit logout action. */
   const renderDrawerContent = useCallback(
@@ -67,7 +129,7 @@ export default function DrawerLayout() {
         headerShown: true,
         drawerActiveTintColor: tintColor,
         drawerLabelStyle: { color: textColor },
-        headerRight: renderHeaderSyncIndicator,
+        headerRight: renderHeaderActions,
       }}
     >
       <Drawer.Screen
@@ -123,7 +185,20 @@ export default function DrawerLayout() {
 }
 
 const styles = StyleSheet.create({
-  headerIndicator: {
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     marginRight: 16,
+  },
+  syncButton: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  syncButtonText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
 });

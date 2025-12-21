@@ -15,16 +15,20 @@ import {
   GROUPE_COMPTAGE_LIST_QUERY,
   LOCATION_LIST_QUERY,
   OFFLINE_ARTICLE_LIST_QUERY,
+  SYNC_INVENTORY_SCANS_MUTATION,
   type CampagneInventaireListData,
   type CampagneInventaireListVariables,
   type GroupeComptageListData,
   type GroupeComptageListVariables,
+  type InventoryScanSyncInput,
   type LocationListData,
   type LocationListVariables,
   type OfflineArticleEntry,
   type OfflineArticleListData,
   type OfflineArticleLocation,
   type OfflineArticleQueryItem,
+  type SyncInventoryScansData,
+  type SyncInventoryScansVariables,
 } from "@/lib/graphql/inventory-operations";
 import { getApolloErrorMessage } from "@/lib/graphql/inventory-hooks";
 import {
@@ -35,6 +39,12 @@ import {
   type InventoryOfflineCache,
   type InventoryOfflineMetadata,
 } from "@/lib/offline/inventory-offline-storage";
+import {
+  loadInventoryScans,
+  markInventoryScansSynced,
+  type InventoryScanRecord,
+  type InventoryScanSyncUpdateInput,
+} from "@/lib/offline/inventory-scan-storage";
 
 /** Offline cache limits used during a full sync. */
 const OFFLINE_SYNC_LIMITS = {
@@ -43,6 +53,9 @@ const OFFLINE_SYNC_LIMITS = {
   locations: 2000,
   articles: 10000,
 } as const;
+
+/** Max number of scan records to sync per request. */
+const SCAN_SYNC_BATCH_SIZE = 100;
 
 /** Default empty cache payload for the inventory offline provider. */
 const EMPTY_CACHE: InventoryOfflineCache = {
@@ -57,6 +70,16 @@ const EMPTY_METADATA: InventoryOfflineMetadata = {
   lastSyncAt: null,
 };
 
+/** Summary returned after syncing local scan records. */
+export type InventoryScanSyncSummary = {
+  /** Total number of scans considered for sync. */
+  totalCount: number;
+  /** Number of scans successfully synced. */
+  syncedCount: number;
+  /** Number of scans that failed to sync. */
+  failedCount: number;
+};
+
 /**
  * Display a toast notification when data is loaded locally.
  */
@@ -66,6 +89,40 @@ function showLocalSyncToast(): void {
   }
 
   ToastAndroid.show("Donnees chargees localement.", ToastAndroid.SHORT);
+}
+
+/**
+ * Split a list into chunks for batched requests.
+ */
+function chunkItems<T>(items: T[], size: number): T[][] {
+  if (size <= 0) {
+    return [items];
+  }
+
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+/**
+ * Map a scan record into the GraphQL sync payload.
+ */
+function buildScanSyncInput(scan: InventoryScanRecord): InventoryScanSyncInput {
+  return {
+    local_id: scan.id,
+    campagne: scan.campaignId,
+    groupe: scan.groupId,
+    lieu: scan.locationId,
+    code_article: scan.codeArticle,
+    capture_le: scan.capturedAt,
+    source_scan: scan.sourceScan ?? undefined,
+    observation: scan.observation ?? undefined,
+    serial_number: scan.serialNumber ?? undefined,
+    etat: scan.etat ?? undefined,
+    article: scan.articleId ?? undefined,
+  };
 }
 
 /** Context shape for offline inventory data. */
@@ -78,10 +135,16 @@ export type InventoryOfflineContextValue = {
   isHydrated: boolean;
   /** Whether a full offline sync is in progress. */
   isSyncing: boolean;
+  /** Whether a scan upload sync is in progress. */
+  isScanSyncing: boolean;
   /** Error message captured during the last sync attempt. */
   syncError: string | null;
+  /** Error message captured during the last scan sync attempt. */
+  scanSyncError: string | null;
   /** Trigger a full offline sync of inventory data. */
   syncAll: () => Promise<void>;
+  /** Upload local scan records to the backend. */
+  syncScans: () => Promise<InventoryScanSyncSummary>;
 };
 
 /** Props for the InventoryOfflineProvider component. */
@@ -136,7 +199,9 @@ export function InventoryOfflineProvider({
   const [metadata, setMetadata] = useState<InventoryOfflineMetadata>(EMPTY_METADATA);
   const [isHydrated, setIsHydrated] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isScanSyncing, setIsScanSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [scanSyncError, setScanSyncError] = useState<string | null>(null);
   const { accessToken, isAuthenticated } = useAuth();
   const lastSyncTokenRef = useRef<string | null>(null);
 
@@ -230,6 +295,76 @@ export function InventoryOfflineProvider({
     }
   }, [client]);
 
+  /** Upload local scan records to the backend API. */
+  const syncScans = useCallback(async (): Promise<InventoryScanSyncSummary> => {
+    if (!isAuthenticated || !accessToken) {
+      const message = "Connexion requise pour synchroniser.";
+      setScanSyncError(message);
+      throw new Error(message);
+    }
+
+    setIsScanSyncing(true);
+    setScanSyncError(null);
+
+    try {
+      const pendingScans = await loadInventoryScans({ isSynced: false });
+      if (pendingScans.length === 0) {
+        return { totalCount: 0, syncedCount: 0, failedCount: 0 };
+      }
+
+      const syncUpdates: InventoryScanSyncUpdateInput[] = [];
+      let failedCount = 0;
+
+      for (const batch of chunkItems(pendingScans, SCAN_SYNC_BATCH_SIZE)) {
+        const input = batch.map(buildScanSyncInput);
+        const response = await client.mutate<
+          SyncInventoryScansData,
+          SyncInventoryScansVariables
+        >({
+          mutation: SYNC_INVENTORY_SCANS_MUTATION,
+          variables: { input },
+          fetchPolicy: "no-cache",
+        });
+
+        const results = response.data?.sync_inventory_scans?.results ?? [];
+        const resultMap = new Map(
+          results.map((result) => [result.local_id, result])
+        );
+
+        for (const scan of batch) {
+          const result = resultMap.get(scan.id);
+          if (result?.ok && result.remote_id) {
+            syncUpdates.push({ id: scan.id, remoteId: result.remote_id });
+          } else {
+            failedCount += 1;
+          }
+        }
+      }
+
+      if (syncUpdates.length > 0) {
+        await markInventoryScansSynced(syncUpdates);
+      }
+
+      const syncedCount = syncUpdates.length;
+      return {
+        totalCount: pendingScans.length,
+        syncedCount,
+        failedCount,
+      };
+    } catch (error) {
+      const message =
+        error instanceof ApolloError
+          ? getApolloErrorMessage(error)
+          : error instanceof Error
+          ? error.message
+          : "La synchronisation des scans a echoue.";
+      setScanSyncError(message);
+      throw new Error(message);
+    } finally {
+      setIsScanSyncing(false);
+    }
+  }, [accessToken, client, isAuthenticated]);
+
   useEffect(() => {
     if (!isAuthenticated) {
       lastSyncTokenRef.current = null;
@@ -254,10 +389,23 @@ export function InventoryOfflineProvider({
       metadata,
       isHydrated,
       isSyncing,
+      isScanSyncing,
       syncError,
+      scanSyncError,
       syncAll,
+      syncScans,
     }),
-    [cache, isHydrated, isSyncing, metadata, syncAll, syncError]
+    [
+      cache,
+      isHydrated,
+      isScanSyncing,
+      isSyncing,
+      metadata,
+      scanSyncError,
+      syncAll,
+      syncError,
+      syncScans,
+    ]
   );
 
   return (

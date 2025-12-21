@@ -3,6 +3,7 @@ import {
   ensureInventoryDatabase,
   getInventorySqlRows,
   runInventorySql,
+  runInventorySqlBatch,
   type InventorySqlValue,
 } from "@/lib/offline/inventory-sqlite";
 
@@ -59,6 +60,8 @@ export type InventoryScanFilter = {
   groupId?: string | null;
   /** Optional location id filter. */
   locationId?: string | null;
+  /** Optional sync status filter. */
+  isSynced?: boolean | null;
   /** Optional maximum number of records to return. */
   limit?: number | null;
 };
@@ -101,6 +104,14 @@ export type InventoryScanUpdateInput = {
   observation?: string | null;
   /** Optional serial number update. */
   serialNumber?: string | null;
+};
+
+/** Input payload used to mark scans as synced. */
+export type InventoryScanSyncUpdateInput = {
+  /** Local scan identifier. */
+  id: string;
+  /** Remote identifier returned by the backend. */
+  remoteId: string | null;
 };
 
 /** SQLite row representation for scan records. */
@@ -203,6 +214,11 @@ function buildScanFilters(
   if (filter.locationId) {
     conditions.push("lieu_id = ?");
     params.push(filter.locationId);
+  }
+
+  if (typeof filter.isSynced === "boolean") {
+    conditions.push("is_synced = ?");
+    params.push(filter.isSynced ? 1 : 0);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -315,5 +331,27 @@ export async function updateInventoryScanDetails(
       now,
       input.id,
     ]
+  );
+}
+
+/**
+ * Mark scan records as synced after a successful upload.
+ */
+export async function markInventoryScansSynced(
+  updates: InventoryScanSyncUpdateInput[]
+): Promise<void> {
+  if (updates.length === 0) {
+    return;
+  }
+
+  await ensureInventoryDatabase();
+  const now = new Date().toISOString();
+
+  await runInventorySqlBatch(
+    updates.map((update) => ({
+      sql:
+        "UPDATE inventory_scans SET remote_id = ?, is_synced = 1, updated_at = ? WHERE id = ?",
+      params: [update.remoteId, now, update.id],
+    }))
   );
 }

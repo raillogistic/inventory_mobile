@@ -673,3 +673,78 @@ export const UPDATE_ENREGISTREMENT_INVENTAIRE_MUTATION = gql`
     }
   }
 `;
+
+/** Input payload for syncing mobile scans to the backend. */
+export type InventoryScanSyncInput = {
+  /** Local scan identifier used to map results. */
+  local_id: string;
+  /** Campaign id associated with the scan. */
+  campagne: string;
+  /** Group id associated with the scan. */
+  groupe: string;
+  /** Location id associated with the scan. */
+  lieu: string;
+  /** Scanned article code. */
+  code_article: string;
+  /** Capture timestamp in ISO format. */
+  capture_le?: string | null;
+  /** Scan origin (camera/manual). */
+  source_scan?: string | null;
+  /** Optional observation for the scan. */
+  observation?: string | null;
+  /** Optional serial number captured during scanning. */
+  serial_number?: string | null;
+  /** Etat du materiel lors du scan. */
+  etat?: EnregistrementInventaireEtat | null;
+  /** Optional article id if known. */
+  article?: string | null;
+  /** Optional operator comment. */
+  commentaire?: string | null;
+};
+
+/** Result entry returned for a synced scan. */
+export type InventoryScanSyncResult = {
+  /** Local scan identifier from the device. */
+  local_id: string;
+  /** Remote scan identifier returned by the backend. */
+  remote_id: string | null;
+  /** Whether the scan was synced successfully. */
+  ok: boolean | null;
+  /** Error messages for a failed scan. */
+  errors: string[] | null;
+};
+
+/** Variables for the sync_inventory_scans mutation. */
+export type SyncInventoryScansVariables = {
+  /** Mutation payload of scans to sync. */
+  input: InventoryScanSyncInput[];
+};
+
+/** Response payload for sync_inventory_scans. */
+export type SyncInventoryScansData = {
+  /** Sync mutation response wrapper. */
+  sync_inventory_scans: {
+    /** Success flag returned by the API. */
+    ok: boolean | null;
+    /** Message returned by the API. */
+    message: string | null;
+    /** Per-scan sync results. */
+    results: InventoryScanSyncResult[] | null;
+  } | null;
+};
+
+/** GraphQL mutation for syncing mobile scans. */
+export const SYNC_INVENTORY_SCANS_MUTATION = gql`
+  mutation SyncInventoryScans($input: [InventoryScanSyncInput!]!) {
+    sync_inventory_scans(input: $input) {
+      ok
+      message
+      results {
+        local_id
+        remote_id
+        ok
+        errors
+      }
+    }
+  }
+`;
