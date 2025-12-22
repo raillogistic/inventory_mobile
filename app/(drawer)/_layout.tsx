@@ -18,6 +18,7 @@ import {
 } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
+import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useAuth } from "@/hooks/use-auth";
 import { useInventoryOffline } from "@/hooks/use-inventory-offline";
 import { useThemeColor } from "@/hooks/use-theme-color";
@@ -32,6 +33,10 @@ export default function DrawerLayout() {
   const router = useRouter();
   const tintColor = useThemeColor({}, "tint");
   const textColor = useThemeColor({}, "text");
+  const buttonTextColor = useThemeColor(
+    { light: "#FFFFFF", dark: "#0F172A" },
+    "text"
+  );
   const shouldShowSyncIndicator = !isHydrated || isSyncing || isScanSyncing;
 
   /** Clear auth tokens and return to the login screen. */
@@ -90,20 +95,36 @@ export default function DrawerLayout() {
         <TouchableOpacity
           style={[
             styles.syncButton,
-            { borderColor: tintColor, opacity: isScanSyncing ? 0.6 : 1 },
+            {
+              backgroundColor: tintColor,
+              opacity: isScanSyncing ? 0.6 : 1,
+            },
           ]}
           onPress={handleSyncScans}
           disabled={isScanSyncing}
           accessibilityRole="button"
           accessibilityLabel="Synchroniser les scans"
         >
-          <ThemedText style={[styles.syncButtonText, { color: tintColor }]}>
-            {isScanSyncing ? "Sync..." : "Sync"}
-          </ThemedText>
+          <View style={styles.syncButtonContent}>
+            <IconSymbol
+              name="arrow.clockwise"
+              size={16}
+              color={buttonTextColor}
+            />
+            <ThemedText style={[styles.syncButtonText, { color: buttonTextColor }]}>
+              {isScanSyncing ? "Sync..." : "Sync"}
+            </ThemedText>
+          </View>
         </TouchableOpacity>
       </View>
     );
-  }, [handleSyncScans, isScanSyncing, shouldShowSyncIndicator, tintColor]);
+  }, [
+    buttonTextColor,
+    handleSyncScans,
+    isScanSyncing,
+    shouldShowSyncIndicator,
+    tintColor,
+  ]);
 
   /** Render the drawer content with an explicit logout action. */
   const renderDrawerContent = useCallback(
@@ -186,13 +207,17 @@ const styles = StyleSheet.create({
     marginRight: 16,
   },
   syncButton: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  syncButtonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   syncButtonText: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "600",
   },
 });
