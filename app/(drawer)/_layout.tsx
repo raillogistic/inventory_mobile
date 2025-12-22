@@ -1,27 +1,36 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { Drawer } from "expo-router/drawer";
 import {
   DrawerContentComponentProps,
   DrawerContentScrollView,
   DrawerItem,
   DrawerItemList,
+  DrawerToggleButton,
 } from "@react-navigation/drawer";
 import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
+  Modal,
   Platform,
+  Pressable,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   ToastAndroid,
   TouchableOpacity,
   View,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { CameraView, type BarcodeScanningResult, type BarcodeType, useCameraPermissions } from "expo-camera";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useAuth } from "@/hooks/use-auth";
 import { useInventoryOffline } from "@/hooks/use-inventory-offline";
+import type { OfflineArticleEntry } from "@/lib/graphql/inventory-operations";
+import { loadInventoryArticleByCode } from "@/lib/offline/inventory-offline-storage";
 
 /**
  * Palette de couleurs premium pour le design.
@@ -48,6 +57,18 @@ const COLORS = {
   drawer_item_border: "rgba(255, 255, 255, 0.08)",
 } as const;
 
+const QUICK_LOOKUP_BARCODE_TYPES: BarcodeType[] = [
+  "code128",
+  "code39",
+  "code93",
+  "ean13",
+  "ean8",
+  "itf14",
+  "upc_a",
+  "upc_e",
+  "codabar",
+];
+
 /**
  * Mise en page du drawer qui expose l'écran d'accueil et l'action de déconnexion.
  * Utilise un design premium avec glassmorphism et dégradés.
@@ -58,12 +79,153 @@ export default function DrawerLayout() {
     useInventoryOffline();
   const router = useRouter();
   const shouldShowSyncIndicator = !isHydrated || isSyncing || isScanSyncing;
+  const [quickLookupCameraPermission, requestQuickLookupCameraPermission] =
+    useCameraPermissions();
+  const quickLookupScanLockRef = useRef(false);
+  const isQuickLookupCameraAllowed =
+    quickLookupCameraPermission?.granted ?? false;
+  const canRequestQuickLookupCamera =
+    quickLookupCameraPermission?.canAskAgain ?? true;
+  /** Tracks visibility for the quick article lookup modal. */
+  const [isQuickLookupVisible, setIsQuickLookupVisible] = useState(false);
+  /** Tracks the current search code for the quick lookup modal. */
+  const [quickLookupCode, setQuickLookupCode] = useState("");
+  /** Holds the article details returned from SQLite. */
+  const [quickLookupResult, setQuickLookupResult] =
+    useState<OfflineArticleEntry | null>(null);
+  /** Tracks errors surfaced while loading the quick lookup result. */
+  const [quickLookupError, setQuickLookupError] = useState<string | null>(null);
+  /** Tracks loading state for the quick lookup action. */
+  const [quickLookupLoading, setQuickLookupLoading] = useState(false);
 
   /** Efface les tokens d'auth et retourne à l'écran de connexion. */
   const handleLogout = useCallback(async () => {
     await clearAuthSession();
     router.replace("/(auth)/login");
   }, [clearAuthSession, router]);
+
+  /** Open the quick article lookup modal. */
+  const handleOpenQuickLookup = useCallback(() => {
+    setQuickLookupCode("");
+    setQuickLookupResult(null);
+    setQuickLookupError(null);
+    setIsQuickLookupVisible(true);
+    quickLookupScanLockRef.current = false;
+    if (!isQuickLookupCameraAllowed && canRequestQuickLookupCamera) {
+      void requestQuickLookupCameraPermission();
+    }
+  }, [
+    canRequestQuickLookupCamera,
+    isQuickLookupCameraAllowed,
+    requestQuickLookupCameraPermission,
+  ]);
+
+  /** Close the quick article lookup modal and reset state. */
+  const handleCloseQuickLookup = useCallback(() => {
+    setIsQuickLookupVisible(false);
+    setQuickLookupCode("");
+    setQuickLookupResult(null);
+    setQuickLookupError(null);
+    setQuickLookupLoading(false);
+    quickLookupScanLockRef.current = false;
+  }, []);
+
+  /** Update the search code for the quick lookup modal. */
+  const handleQuickLookupCodeChange = useCallback((value: string) => {
+    setQuickLookupCode(value);
+    setQuickLookupError(null);
+  }, []);
+
+  /** Request camera permission for the quick lookup modal. */
+  const handleRequestQuickLookupCamera = useCallback(async () => {
+    if (isQuickLookupCameraAllowed || !canRequestQuickLookupCamera) {
+      return;
+    }
+
+    const response = await requestQuickLookupCameraPermission();
+    if (response.granted) {
+      quickLookupScanLockRef.current = false;
+    }
+  }, [
+    canRequestQuickLookupCamera,
+    isQuickLookupCameraAllowed,
+    requestQuickLookupCameraPermission,
+  ]);
+
+  /** Load the article details from SQLite for the provided code. */
+  const performQuickLookup = useCallback(async (code: string) => {
+    const trimmed = code.trim();
+    if (!trimmed) {
+      setQuickLookupError("Le code est requis.");
+      setQuickLookupResult(null);
+      return;
+    }
+
+    setQuickLookupCode(trimmed);
+    Keyboard.dismiss();
+    setQuickLookupLoading(true);
+    setQuickLookupError(null);
+    setQuickLookupResult(null);
+    try {
+      const result = await loadInventoryArticleByCode(trimmed);
+      if (!result) {
+        setQuickLookupError("Article introuvable.");
+        setQuickLookupResult(null);
+        return;
+      }
+
+      setQuickLookupResult(result);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Recherche impossible.";
+      setQuickLookupError(message);
+      setQuickLookupResult(null);
+    } finally {
+      setQuickLookupLoading(false);
+    }
+  }, []);
+
+  /** Trigger the quick lookup using the current code value. */
+  const handleQuickLookupSubmit = useCallback(async () => {
+    await performQuickLookup(quickLookupCode);
+  }, [performQuickLookup, quickLookupCode]);
+
+  /** Reset the quick lookup state to scan again. */
+  const handleQuickLookupReset = useCallback(() => {
+    quickLookupScanLockRef.current = false;
+    setQuickLookupCode("");
+    setQuickLookupResult(null);
+    setQuickLookupError(null);
+  }, []);
+
+  /** Handle barcode scans for the quick lookup camera. */
+  const handleQuickLookupBarcode = useCallback(
+    (result: BarcodeScanningResult) => {
+      if (
+        !isQuickLookupVisible ||
+        quickLookupScanLockRef.current ||
+        quickLookupLoading ||
+        !isQuickLookupCameraAllowed
+      ) {
+        return;
+      }
+
+      const scannedCode = result.data?.trim();
+      if (!scannedCode) {
+        return;
+      }
+
+      quickLookupScanLockRef.current = true;
+      setQuickLookupCode(scannedCode);
+      void performQuickLookup(scannedCode);
+    },
+    [
+      isQuickLookupCameraAllowed,
+      isQuickLookupVisible,
+      performQuickLookup,
+      quickLookupLoading,
+    ]
+  );
 
   /** Affiche un toast ou une alerte pour le feedback de synchronisation. */
   const showSyncMessage = useCallback((message: string) => {
@@ -110,6 +272,25 @@ export default function DrawerLayout() {
       showSyncMessage(message);
     }
   }, [isScanSyncing, showSyncMessage, syncScans]);
+/** Render the left header actions (drawer toggle + quick lookup). */
+const renderHeaderLeft = useCallback(() => {
+  return (
+    <View style={styles.header_left_actions}>
+      <DrawerToggleButton tintColor={COLORS.text_primary} />
+      <TouchableOpacity
+        style={styles.quick_lookup_button}
+        onPress={handleOpenQuickLookup}
+        accessibilityRole="button"
+        accessibilityLabel="Consulter un article"
+        activeOpacity={0.8}
+      >
+        <IconSymbol name="eye" size={16} color={COLORS.text_primary} />
+        <Text style={styles.quick_lookup_text}>Voir article</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}, [handleOpenQuickLookup]);
+
 
   /** Rend les actions d'en-tête pour le statut de sync et la sync manuelle. */
   const renderHeaderActions = useCallback(() => {
@@ -147,13 +328,172 @@ export default function DrawerLayout() {
               color={COLORS.text_primary}
             />
             <Text style={styles.sync_button_text}>
-              {isScanSyncing ? "Sync..." : "Sync"}
+              {isScanSyncing
+                ? "T\u00e9l\u00e9chargement..."
+                : "T\u00e9l\u00e9charger sur le serveur"}
             </Text>
           </LinearGradient>
         </TouchableOpacity>
       </View>
     );
   }, [handleSyncScans, isScanSyncing, shouldShowSyncIndicator]);
+  /** Render the quick article lookup modal overlay. */
+  const renderQuickLookupModal = useCallback(() => {
+    const locationNames =
+      quickLookupResult?.locations
+        .map((location) => location.locationname)
+        .join(", ") ?? "";
+    const currentLocationName =
+      quickLookupResult?.currentLocation?.locationname ?? "Non defini";
+    const serialNumber = quickLookupResult?.serialnumber ?? "Non renseigne";
+
+    return (
+      <Modal
+        visible={isQuickLookupVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={handleCloseQuickLookup}
+      >
+        <View style={styles.quick_lookup_overlay}>
+          <View style={styles.quick_lookup_card}>
+            <View style={styles.quick_lookup_header}>
+              <Text style={styles.quick_lookup_title}>Recherche article</Text>
+              <Pressable
+                onPress={handleCloseQuickLookup}
+                accessibilityRole="button"
+                accessibilityLabel="Fermer la recherche"
+              >
+                <IconSymbol
+                  name="chevron.right"
+                  size={18}
+                  color={COLORS.text_primary}
+                />
+              </Pressable>
+            </View>
+            <View style={styles.quick_lookup_camera_container}>
+              {isQuickLookupCameraAllowed ? (
+                <CameraView
+                  style={styles.quick_lookup_camera_view}
+                  barcodeScannerSettings={{
+                    barcodeTypes: QUICK_LOOKUP_BARCODE_TYPES,
+                  }}
+                  onBarcodeScanned={handleQuickLookupBarcode}
+                >
+                  <View style={styles.quick_lookup_camera_overlay}>
+                    <Text style={styles.quick_lookup_camera_text}>
+                      Scanner le code-barres
+                    </Text>
+                  </View>
+                </CameraView>
+              ) : (
+                <View style={styles.quick_lookup_camera_placeholder}>
+                  <Text style={styles.quick_lookup_camera_text}>
+                    Autoriser la camera pour scanner.
+                  </Text>
+                  {canRequestQuickLookupCamera ? (
+                    <TouchableOpacity
+                      style={styles.quick_lookup_camera_button}
+                      onPress={handleRequestQuickLookupCamera}
+                      accessibilityRole="button"
+                      accessibilityLabel="Autoriser la camera"
+                    >
+                      <Text style={styles.quick_lookup_camera_button_text}>
+                        Autoriser la camera
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              )}
+            </View>
+            <Text style={styles.quick_lookup_label}>Code article</Text>
+            <View style={styles.quick_lookup_input_row}>
+              <TextInput
+                style={styles.quick_lookup_input}
+                value={quickLookupCode}
+                onChangeText={handleQuickLookupCodeChange}
+                placeholder="Code scanne ou saisir"
+                placeholderTextColor={COLORS.text_muted}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                returnKeyType="search"
+                editable={!quickLookupLoading}
+                onSubmitEditing={handleQuickLookupSubmit}
+              />
+              <TouchableOpacity
+                style={[
+                  styles.quick_lookup_action,
+                  quickLookupLoading && styles.quick_lookup_action_disabled,
+                ]}
+                onPress={handleQuickLookupSubmit}
+                disabled={quickLookupLoading}
+                accessibilityRole="button"
+                accessibilityLabel="Rechercher l'article"
+              >
+                <Text style={styles.quick_lookup_action_text}>Rechercher</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.quick_lookup_reset_row}>
+              <TouchableOpacity
+                onPress={handleQuickLookupReset}
+                accessibilityRole="button"
+                accessibilityLabel="Scanner a nouveau"
+              >
+                <Text style={styles.quick_lookup_reset_text}>
+                  Scanner a nouveau
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {quickLookupLoading ? (
+              <View style={styles.quick_lookup_loading}>
+                <ActivityIndicator
+                  size="small"
+                  color={COLORS.accent_primary}
+                />
+              </View>
+            ) : null}
+            {quickLookupError ? (
+              <Text style={styles.quick_lookup_error}>{quickLookupError}</Text>
+            ) : null}
+            {quickLookupResult ? (
+              <ScrollView style={styles.quick_lookup_details}>
+                <Text style={styles.quick_lookup_detail_line}>
+                  Code: {quickLookupResult.code}
+                </Text>
+                <Text style={styles.quick_lookup_detail_line}>
+                  Description: {quickLookupResult.desc ?? "Non renseigne"}
+                </Text>
+                <Text style={styles.quick_lookup_detail_line}>
+                  Numero de serie: {serialNumber}
+                </Text>
+                <Text style={styles.quick_lookup_detail_line}>
+                  Lieu actuel: {currentLocationName}
+                </Text>
+                <Text style={styles.quick_lookup_detail_line}>
+                  Lieux affectes: {locationNames || "Aucun lieu"}
+                </Text>
+              </ScrollView>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+    );
+  }, [
+    canRequestQuickLookupCamera,
+    handleCloseQuickLookup,
+    handleQuickLookupBarcode,
+    handleQuickLookupCodeChange,
+    handleQuickLookupReset,
+    handleQuickLookupSubmit,
+    handleRequestQuickLookupCamera,
+    isQuickLookupCameraAllowed,
+    isQuickLookupVisible,
+    quickLookupCode,
+    quickLookupError,
+    quickLookupLoading,
+    quickLookupResult,
+  ]);
+
+
 
   /** Rend le contenu du drawer avec une action de déconnexion explicite. */
   const renderDrawerContent = useCallback(
@@ -232,14 +572,16 @@ export default function DrawerLayout() {
   );
 
   return (
-    <Drawer
-      drawerContent={renderDrawerContent}
-      initialRouteName="lieux"
-      screenOptions={{
+    <>
+      <Drawer
+        drawerContent={renderDrawerContent}
+        initialRouteName="lieux"
+        screenOptions={{
         headerShown: true,
         headerTintColor: COLORS.text_primary,
         headerTitleStyle: styles.header_title_style,
         headerStyle: styles.header_style,
+        headerLeft: renderHeaderLeft,
         headerRight: renderHeaderActions,
         drawerActiveTintColor: COLORS.accent_primary,
         drawerInactiveTintColor: COLORS.text_secondary,
@@ -329,7 +671,9 @@ export default function DrawerLayout() {
           ),
         }}
       />
-    </Drawer>
+      </Drawer>
+      {renderQuickLookupModal()}
+    </>
   );
 }
 
@@ -360,6 +704,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     marginRight: 16,
+  },
+  header_left_actions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginLeft: 8,
+  },
+  quick_lookup_button: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.glass_border,
+    backgroundColor: COLORS.glass_bg,
+  },
+  quick_lookup_text: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.text_primary,
   },
   sync_indicator: {
     width: 32,
@@ -394,6 +760,132 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: COLORS.text_primary,
     letterSpacing: 0.3,
+  },
+  quick_lookup_overlay: {
+    flex: 1,
+    backgroundColor: "rgba(10, 22, 40, 0.75)",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  quick_lookup_card: {
+    backgroundColor: COLORS.drawer_bg,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.glass_border,
+  },
+  quick_lookup_header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  quick_lookup_title: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.text_primary,
+  },
+  quick_lookup_camera_container: {
+    height: 200,
+    borderRadius: 14,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: COLORS.glass_border,
+    backgroundColor: "rgba(15, 23, 42, 0.6)",
+    marginBottom: 12,
+  },
+  quick_lookup_camera_view: {
+    flex: 1,
+  },
+  quick_lookup_camera_overlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    padding: 12,
+    backgroundColor: "rgba(0, 0, 0, 0.25)",
+  },
+  quick_lookup_camera_text: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.text_primary,
+  },
+  quick_lookup_camera_placeholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  quick_lookup_camera_button: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: COLORS.accent_primary,
+  },
+  quick_lookup_camera_button_text: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.text_primary,
+  },
+  quick_lookup_label: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.text_secondary,
+    marginBottom: 6,
+  },
+  quick_lookup_input_row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  quick_lookup_input: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    backgroundColor: COLORS.glass_bg,
+    borderWidth: 1,
+    borderColor: COLORS.glass_border,
+    color: COLORS.text_primary,
+  },
+  quick_lookup_action: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: COLORS.accent_primary,
+  },
+  quick_lookup_action_disabled: {
+    opacity: 0.6,
+  },
+  quick_lookup_action_text: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.text_primary,
+  },
+  quick_lookup_reset_row: {
+    marginTop: 8,
+    alignItems: "flex-end",
+  },
+  quick_lookup_reset_text: {
+    fontSize: 11,
+    color: COLORS.text_secondary,
+  },
+  quick_lookup_loading: {
+    marginTop: 12,
+    alignItems: "flex-start",
+  },
+  quick_lookup_error: {
+    marginTop: 12,
+    fontSize: 12,
+    color: "#FCA5A5",
+  },
+  quick_lookup_details: {
+    marginTop: 12,
+    maxHeight: 220,
+  },
+  quick_lookup_detail_line: {
+    fontSize: 12,
+    color: COLORS.text_secondary,
+    marginBottom: 8,
   },
   /* Drawer */
   drawer_style: {

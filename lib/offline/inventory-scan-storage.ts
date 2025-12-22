@@ -44,6 +44,10 @@ export type InventoryScanRecord = {
   sourceScan: string | null;
   /** Optional image URI captured at scan time. */
   imageUri: string | null;
+  /** Optional second image URI captured at scan time. */
+  imageUri2: string | null;
+  /** Optional third image URI captured at scan time. */
+  imageUri3: string | null;
   /** Status derived for the scan. */
   status: InventoryScanStatus;
   /** Human-readable status label. */
@@ -98,6 +102,10 @@ export type InventoryScanCreateInput = {
   sourceScan?: string | null;
   /** Optional captured image URI. */
   imageUri?: string | null;
+  /** Optional second captured image URI. */
+  imageUri2?: string | null;
+  /** Optional third captured image URI. */
+  imageUri3?: string | null;
   /** Status derived for the scan. */
   status: InventoryScanStatus;
   /** Human-readable status label. */
@@ -162,6 +170,10 @@ type InventoryScanRow = {
   source_scan: string | null;
   /** Optional image URI. */
   image_uri: string | null;
+  /** Optional second image URI. */
+  image_uri2: string | null;
+  /** Optional third image URI. */
+  image_uri3: string | null;
   /** Status value. */
   status: InventoryScanStatus;
   /** Status label text. */
@@ -202,6 +214,8 @@ function mapInventoryScanRow(row: InventoryScanRow): InventoryScanRecord {
     capturedAt: row.capture_le,
     sourceScan: row.source_scan ?? null,
     imageUri: row.image_uri ?? null,
+    imageUri2: row.image_uri2 ?? null,
+    imageUri3: row.image_uri3 ?? null,
     status: row.status,
     statusLabel: row.status_label,
     isSynced: row.is_synced === 1,
@@ -255,7 +269,7 @@ export async function loadInventoryScans(
   const sql =
     "SELECT id, remote_id, campagne_id, groupe_id, lieu_id, lieu_name, code_article, " +
     "article_id, article_desc, observation, commentaire, custom_desc, serial_number, etat, capture_le, source_scan, " +
-    "image_uri, status, status_label, is_synced, updated_at " +
+    "image_uri, image_uri2, image_uri3, status, status_label, is_synced, updated_at " +
     `FROM inventory_scans ${whereClause} ` +
     "ORDER BY capture_le DESC " +
     `${limitClause}`;
@@ -294,6 +308,8 @@ export async function createInventoryScan(
     capturedAt,
     sourceScan: input.sourceScan ?? null,
     imageUri: input.imageUri ?? null,
+    imageUri2: input.imageUri2 ?? null,
+    imageUri3: input.imageUri3 ?? null,
     status: input.status,
     statusLabel: input.statusLabel,
     isSynced: false,
@@ -303,8 +319,8 @@ export async function createInventoryScan(
   await runInventorySql(
     "INSERT INTO inventory_scans " +
       "(id, remote_id, code_article, article_id, article_desc, campagne_id, groupe_id, lieu_id, lieu_name, " +
-      "commentaire, custom_desc, observation, serial_number, etat, capture_le, source_scan, image_uri, status, status_label, is_synced, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "commentaire, custom_desc, observation, serial_number, etat, capture_le, source_scan, image_uri, image_uri2, image_uri3, status, status_label, is_synced, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       record.id,
       record.remoteId,
@@ -323,6 +339,8 @@ export async function createInventoryScan(
       record.capturedAt,
       record.sourceScan,
       record.imageUri,
+      record.imageUri2,
+      record.imageUri3,
       record.status,
       record.statusLabel,
       record.isSynced ? 1 : 0,

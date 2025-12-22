@@ -62,7 +62,7 @@ const SCAN_SYNC_BATCH_SIZE = 100;
 /** Base64 metadata payload used for scan image sync. */
 type ScanCapturePayload = {
   /** Image payload with base64 and mime metadata. */
-  image: {
+  image?: {
     /** Base64 encoded image data. */
     data_base64: string;
     /** Image mime type derived from the file extension. */
@@ -70,6 +70,15 @@ type ScanCapturePayload = {
     /** Optional filename derived from the local URI. */
     filename: string | null;
   };
+  /** Optional list of images for multi-photo captures. */
+  images?: {
+    /** Base64 encoded image data. */
+    data_base64: string;
+    /** Image mime type derived from the file extension. */
+    mime_type: string;
+    /** Optional filename derived from the local URI. */
+    filename: string | null;
+  }[];
 };
 
 /** Default empty cache payload for the inventory offline provider. */
@@ -155,36 +164,46 @@ function extractFileName(uri: string): string | null {
 async function buildScanCapturePayload(
   scan: InventoryScanRecord
 ): Promise<string | undefined> {
-  if (!scan.imageUri) {
+  const imageUris = [scan.imageUri, scan.imageUri2, scan.imageUri3].filter(
+    (uri): uri is string => Boolean(uri)
+  );
+  if (imageUris.length === 0) {
     return undefined;
   }
 
-  const info = await FileSystem.getInfoAsync(scan.imageUri);
-  if (!info.exists) {
-    throw new Error("Image introuvable pour le scan.");
-  }
+  const images: ScanCapturePayload["images"] = [];
 
-  let base64: string;
-  try {
-    base64 = await FileSystem.readAsStringAsync(scan.imageUri, {
-      encoding: FileSystem.EncodingType.Base64,
+  for (const uri of imageUris) {
+    const info = await FileSystem.getInfoAsync(uri);
+    if (!info.exists) {
+      throw new Error("Image introuvable pour le scan.");
+    }
+
+    let base64: string;
+    try {
+      base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Lecture image impossible.";
+      throw new Error(message);
+    }
+
+    if (!base64) {
+      throw new Error("Image vide.");
+    }
+
+    images.push({
+      data_base64: base64,
+      mime_type: guessImageMimeType(uri),
+      filename: extractFileName(uri),
     });
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Lecture image impossible.";
-    throw new Error(message);
-  }
-
-  if (!base64) {
-    throw new Error("Image vide.");
   }
 
   const payload: ScanCapturePayload = {
-    image: {
-      data_base64: base64,
-      mime_type: guessImageMimeType(scan.imageUri),
-      filename: extractFileName(scan.imageUri),
-    },
+    image: images[0],
+    images,
   };
 
   return JSON.stringify(payload);

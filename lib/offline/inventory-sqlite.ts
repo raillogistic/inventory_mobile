@@ -234,6 +234,8 @@ async function initializeInventoryDatabase(): Promise<void> {
         "capture_le TEXT NOT NULL, " +
         "source_scan TEXT, " +
         "image_uri TEXT, " +
+        "image_uri2 TEXT, " +
+        "image_uri3 TEXT, " +
         "status TEXT NOT NULL, " +
         "status_label TEXT NOT NULL, " +
         "is_synced INTEGER NOT NULL, " +
@@ -365,6 +367,18 @@ async function migrateInventoryDatabase(): Promise<void> {
   if (!scanColumnNames.has("custom_desc")) {
     await runInventorySql(
       "ALTER TABLE inventory_scans ADD COLUMN custom_desc TEXT"
+    );
+  }
+
+  if (!scanColumnNames.has("image_uri2")) {
+    await runInventorySql(
+      "ALTER TABLE inventory_scans ADD COLUMN image_uri2 TEXT"
+    );
+  }
+
+  if (!scanColumnNames.has("image_uri3")) {
+    await runInventorySql(
+      "ALTER TABLE inventory_scans ADD COLUMN image_uri3 TEXT"
     );
   }
 }

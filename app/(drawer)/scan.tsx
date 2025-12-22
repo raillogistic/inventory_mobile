@@ -113,6 +113,8 @@ type ScanDetail = {
   id: string | null;
   /** Scanned article code displayed in the modal. */
   code: string;
+  /** Optional article identifier resolved from the cache. */
+  articleId: string | null;
   /** Optional description for the scanned article. */
   description: string | null;
   /** Optional captured image URI. */
@@ -188,8 +190,8 @@ const ETAT_OPTIONS: EtatOption[] = [
 ];
 /** Tabs available for the scan list view. */
 const SCAN_LIST_TABS: ScanListTabConfig[] = [
-  { id: "scanned", label: "Articles scannes" },
-  { id: "location", label: "Articles du lieu" },
+  { id: "scanned", label: "Articles déja scannés" },
+  { id: "location", label: "Articles dans la localisation" },
 ];
 
 /**
@@ -313,6 +315,8 @@ export default function ScanScreen() {
   const [isManualCaptureActive, setIsManualCaptureActive] = useState(false);
   const [isManualFormVisible, setIsManualFormVisible] = useState(false);
   const [manualImageUri, setManualImageUri] = useState<string | null>(null);
+  const [manualImageUri2, setManualImageUri2] = useState<string | null>(null);
+  const [manualImageUri3, setManualImageUri3] = useState<string | null>(null);
   const [manualCustomDesc, setManualCustomDesc] = useState<string>("");
   const [manualObservation, setManualObservation] = useState<string>("");
   const [manualSerialNumber, setManualSerialNumber] = useState<string>("");
@@ -474,6 +478,14 @@ export default function ScanScreen() {
     : "Autorisation refusee. Activez-la dans les reglages.";
   const manualStatusMessage = "Ajoutez un article manuellement.";
   const manualGlowColor = "rgba(249,115,22,0.45)";
+  const manualImageUris = useMemo(
+    () =>
+      [manualImageUri, manualImageUri2, manualImageUri3].filter(
+        (uri): uri is string => Boolean(uri)
+      ),
+    [manualImageUri, manualImageUri2, manualImageUri3]
+  );
+  const manualImageCount = manualImageUris.length;
   const locationArticlesLoading =
     !isHydrated || (isSyncing && cache.articles.length === 0);
   const locationArticlesErrorMessage = syncError;
@@ -675,6 +687,10 @@ export default function ScanScreen() {
       );
     }
 
+    if (!scanDetail.id) {
+      return !etatLoading;
+    }
+
     return hasUpdate && !etatLoading;
   }, [
     customDescriptionValue,
@@ -744,6 +760,7 @@ export default function ScanScreen() {
           return {
             id: scan.id,
             code: scan.codeArticle,
+            articleId: scan.articleId ?? lookup?.id ?? null,
             description: scan.articleDescription ?? lookup?.desc ?? null,
             customDesc: scan.customDesc ?? null,
             observation: scan.observation ?? null,
@@ -817,6 +834,8 @@ export default function ScanScreen() {
     setIsManualCaptureActive(false);
     setIsManualFormVisible(false);
     setManualImageUri(null);
+    setManualImageUri2(null);
+    setManualImageUri3(null);
     setManualObservation("");
     setManualSerialNumber("");
     setManualEtat(null);
@@ -857,6 +876,8 @@ export default function ScanScreen() {
   /** Reset the manual entry draft state. */
   const resetManualDraft = useCallback(() => {
     setManualImageUri(null);
+    setManualImageUri2(null);
+    setManualImageUri3(null);
     setManualCustomDesc("");
     setManualObservation("");
     setManualSerialNumber("");
@@ -1033,6 +1054,11 @@ export default function ScanScreen() {
   /** Capture a photo for the manual entry. */
   const handleManualCapture = useCallback(async () => {
     try {
+      if (manualImageUri && manualImageUri2 && manualImageUri3) {
+        setManualError("Maximum 3 photos.");
+        return;
+      }
+
       const camera = manualCameraRef.current;
       if (!camera?.takePictureAsync) {
         setManualError("Camera indisponible.");
@@ -1045,7 +1071,13 @@ export default function ScanScreen() {
       });
       if (snapshot && typeof snapshot === "object" && "uri" in snapshot) {
         const persistedUri = await persistManualCapture(snapshot.uri ?? null);
-        setManualImageUri(persistedUri);
+        if (!manualImageUri) {
+          setManualImageUri(persistedUri);
+        } else if (!manualImageUri2) {
+          setManualImageUri2(persistedUri);
+        } else {
+          setManualImageUri3(persistedUri);
+        }
         setManualError(null);
         return;
       }
@@ -1053,7 +1085,7 @@ export default function ScanScreen() {
     } catch {
       setManualError("Impossible de capturer l'image.");
     }
-  }, [persistManualCapture]);
+  }, [manualImageUri, manualImageUri2, manualImageUri3, persistManualCapture]);
 
   /** Continue from the manual capture to the form. */
   const handleManualContinue = useCallback(() => {
@@ -1147,6 +1179,8 @@ export default function ScanScreen() {
         capturedAt: new Date().toISOString(),
         sourceScan: "manual",
         imageUri: manualImageUri,
+        imageUri2: manualImageUri2,
+        imageUri3: manualImageUri3,
         status: "missing",
         statusLabel: "Article manuel",
       });
@@ -1190,6 +1224,8 @@ export default function ScanScreen() {
     locationId,
     manualEtat,
     manualImageUri,
+    manualImageUri2,
+    manualImageUri3,
     manualCustomDesc,
     manualObservation,
     manualSerialNumber,
@@ -1222,72 +1258,66 @@ export default function ScanScreen() {
         return;
       }
 
-      let lookup = normalizedCode ? articleLookup.get(normalizedCode) : null;
-      if (!lookup) {
-        try {
+      setIsSubmittingScan(true);
+      try {
+        let lookup = normalizedCode ? articleLookup.get(normalizedCode) : null;
+        if (!lookup) {
           lookup = await loadInventoryArticleByCode(cleanedCode);
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Impossible de charger l'article.";
-          setScanSubmitError(message);
+        }
+
+        const isInLocation = normalizedCode
+          ? locationArticleCodeSet.has(normalizedCode)
+          : false;
+        const existingScan = existingCodes.has(normalizedCode)
+          ? findExistingScan(normalizedCode)
+          : null;
+        const hasKnownArticle =
+          Boolean(existingScan?.hasArticle) || Boolean(lookup);
+        const status: InventoryScanStatus = isInLocation
+          ? "scanned"
+          : hasKnownArticle
+          ? "other"
+          : "missing";
+        const statusLabel = getStatusLabel(status);
+        const detailDescription =
+          existingScan?.description ?? lookup?.desc ?? null;
+
+        if (existingScan) {
+          setLocalError(null);
+          setScanSubmitError(null);
+          setInfoMessage("Code deja scanne pour ce lieu.");
+          setScanDetail({
+            id: existingScan.id,
+            code: existingScan.code,
+            articleId: existingScan.articleId ?? null,
+            description: detailDescription,
+            imageUri,
+            customDesc: existingScan.customDesc ?? null,
+            source: null,
+            status,
+            statusLabel,
+            capturedAt: existingScan.capturedAt,
+            alreadyScanned: true,
+            observation: existingScan.observation ?? null,
+            serialNumber:
+              existingScan.serialNumber ?? lookup?.serialnumber ?? null,
+          });
+          setIsCameraActive(false);
+          setSelectedEtat(null);
+          setEtatMessage(null);
+          setCodeValue("");
+          await triggerSuccessHaptic();
           return;
         }
-      }
-      const isInLocation = normalizedCode
-        ? locationArticleCodeSet.has(normalizedCode)
-        : false;
-      const existingScan = existingCodes.has(normalizedCode)
-        ? findExistingScan(normalizedCode)
-        : null;
-      const hasKnownArticle =
-        Boolean(existingScan?.hasArticle) || Boolean(lookup);
-      const status: InventoryScanStatus = isInLocation
-        ? "scanned"
-        : hasKnownArticle
-        ? "other"
-        : "missing";
-      const statusLabel = getStatusLabel(status);
-      const detailDescription =
-        existingScan?.description ?? lookup?.desc ?? null;
 
-      if (existingScan) {
         setLocalError(null);
         setScanSubmitError(null);
-        setInfoMessage("Code deja scanne pour ce lieu.");
-        setScanDetail({
-          id: existingScan.id,
-          code: existingScan.code,
-          description: detailDescription,
-          imageUri,
-          customDesc: existingScan.customDesc ?? null,
-          source: null,
-          status,
-          statusLabel,
-          capturedAt: existingScan.capturedAt,
-          alreadyScanned: true,
-          observation: existingScan.observation ?? null,
-          serialNumber:
-            existingScan.serialNumber ?? lookup?.serialnumber ?? null,
-        });
-        setIsCameraActive(false);
-        setSelectedEtat(null);
-        setEtatMessage(null);
-        setCodeValue("");
-        await triggerSuccessHaptic();
-        return;
-      }
+        setInfoMessage(null);
 
-      setLocalError(null);
-      setScanSubmitError(null);
-      setInfoMessage(null);
-
-      const locationName = session.location?.locationname ?? "Lieu inconnu";
-      if (status === "missing") {
         setScanDetail({
           id: null,
           code: cleanedCode,
+          articleId: lookup?.id ?? null,
           description: detailDescription,
           imageUri,
           customDesc: null,
@@ -1297,7 +1327,8 @@ export default function ScanScreen() {
           capturedAt: new Date().toISOString(),
           alreadyScanned: false,
           observation: null,
-          serialNumber: null,
+          serialNumber:
+            status === "missing" ? null : lookup?.serialnumber ?? null,
         });
         setIsCameraActive(false);
         setSelectedEtat(null);
@@ -1305,53 +1336,11 @@ export default function ScanScreen() {
         setCodeValue("");
         await triggerSuccessHaptic();
         return;
-      }
-      setIsSubmittingScan(true);
-      try {
-        const record = await createInventoryScan({
-          campaignId,
-          groupId,
-          locationId,
-          locationName,
-          codeArticle: cleanedCode,
-          articleId: lookup?.id ?? null,
-          articleDescription: lookup?.desc ?? null,
-          serialNumber: lookup?.serialnumber ?? null,
-          capturedAt: new Date().toISOString(),
-          sourceScan: source,
-          imageUri,
-          status,
-          statusLabel,
-        });
-
-        setScanRecords((current) => {
-          const next = [record, ...current];
-          return next.slice(0, SCAN_STATUS_LIMIT);
-        });
-        setScanDetail({
-          id: record.id,
-          code: record.codeArticle,
-          description: record.articleDescription ?? detailDescription,
-          imageUri: record.imageUri,
-          customDesc: record.customDesc ?? null,
-          source: source,
-          status,
-          statusLabel,
-          capturedAt: record.capturedAt,
-          alreadyScanned: false,
-          observation: null,
-          serialNumber: record.serialNumber ?? lookup?.serialnumber ?? null,
-        });
-        setIsCameraActive(false);
-        setSelectedEtat(null);
-        setEtatMessage(null);
-        setCodeValue("");
-        await triggerSuccessHaptic();
       } catch (error) {
         const message =
           error instanceof Error
             ? error.message
-            : "Le scan n'a pas pu etre enregistre.";
+            : "Impossible de charger l'article.";
         setScanSubmitError(message);
       } finally {
         setIsSubmittingScan(false);
@@ -1586,7 +1575,7 @@ export default function ScanScreen() {
         setEtatMessage("Une image est requise pour l'article inconnu.");
         return;
       }
-    } else if (!selectedEtat && !shouldUpdate) {
+    } else if (!isDraft && !selectedEtat && !shouldUpdate) {
       setEtatMessage("Choisissez un etat ou ajoutez une observation.");
       return;
     }
@@ -1605,14 +1594,18 @@ export default function ScanScreen() {
       setEtatLoading(true);
       setEtatErrorMessage(null);
       try {
+        const normalizedCode = normalizeScanCode(scanDetail.code);
+        const resolvedArticle =
+          normalizedCode.length > 0 ? articleLookup.get(normalizedCode) : null;
         savedRecord = await createInventoryScan({
           campaignId,
           groupId,
           locationId,
           locationName,
           codeArticle: scanDetail.code,
-          articleId: null,
-          articleDescription: scanDetail.description ?? null,
+          articleId: scanDetail.articleId ?? resolvedArticle?.id ?? null,
+          articleDescription:
+            scanDetail.description ?? resolvedArticle?.desc ?? null,
           customDesc: hasCustomDescription ? trimmedCustomDescription : null,
           observation: hasObservation ? trimmedObservation : null,
           serialNumber: hasSerialNumber ? trimmedSerialNumber : null,
@@ -1716,6 +1709,7 @@ export default function ScanScreen() {
     scanDetail?.customDesc,
     scanDetail?.description,
     scanDetail?.id,
+    scanDetail?.articleId,
     scanDetail?.imageUri,
     scanDetail?.source,
     scanDetail?.status,
@@ -1725,6 +1719,7 @@ export default function ScanScreen() {
     selectedEtat,
     session.location?.id,
     session.location?.locationname,
+    articleLookup,
     createInventoryScan,
     updateInventoryScanDetails,
   ]);
@@ -1985,6 +1980,9 @@ export default function ScanScreen() {
                     </ThemedText>
                     <ThemedText style={styles.cameraHint}>
                       Cadrez l&apos;article puis prenez la photo.
+                    </ThemedText>
+                    <ThemedText style={styles.cameraHint}>
+                      Photos: {manualImageCount}/3
                     </ThemedText>
                     {manualError ? (
                       <ThemedText style={styles.manualErrorText}>
@@ -2488,25 +2486,44 @@ export default function ScanScreen() {
                   </TouchableOpacity>
                 </View>
               ) : (
-                <TouchableOpacity
-                  style={[
-                    styles.modalButton,
-                    {
-                      backgroundColor: highlightColor,
-                      opacity: canSubmitScanDetail ? 1 : 0.6,
-                    },
-                  ]}
-                  onPress={handleConfirmEtat}
-                  disabled={!canSubmitScanDetail}
-                >
-                  {etatLoading ? (
-                    <ActivityIndicator color={buttonTextColor} size="small" />
-                  ) : (
-                    <ThemedText style={styles.modalButtonText}>
-                      Scanner suivant
+                <View style={styles.modalButtonRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalButtonSecondary,
+                      { borderColor: highlightColor },
+                    ]}
+                    onPress={handleCloseScanModal}
+                    disabled={etatLoading}
+                  >
+                    <ThemedText
+                      style={[
+                        styles.modalButtonSecondaryText,
+                        { color: textColor },
+                      ]}
+                    >
+                      Annuler
                     </ThemedText>
-                  )}
-                </TouchableOpacity>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalButton,
+                      {
+                        backgroundColor: highlightColor,
+                        opacity: canSubmitScanDetail ? 1 : 0.6,
+                      },
+                    ]}
+                    onPress={handleConfirmEtat}
+                    disabled={!canSubmitScanDetail}
+                  >
+                    {etatLoading ? (
+                      <ActivityIndicator color={buttonTextColor} size="small" />
+                    ) : (
+                      <ThemedText style={styles.modalButtonText}>
+                        Enregistrer et scanner suivant
+                      </ThemedText>
+                    )}
+                  </TouchableOpacity>
+                </View>
               )}
             </Pressable>
           ) : null}
@@ -2548,12 +2565,26 @@ export default function ScanScreen() {
               <ThemedText type="title" style={styles.modalCodeText}>
                 Enregistrement manuel
               </ThemedText>
-              {manualImageUri ? (
-                <Image
-                  source={{ uri: manualImageUri }}
-                  style={styles.manualPreview}
-                  resizeMode="cover"
-                />
+              {manualImageUris.length > 0 ? (
+                <View style={styles.manualPreviewGroup}>
+                  <Image
+                    source={{ uri: manualImageUris[0] }}
+                    style={styles.manualPreview}
+                    resizeMode="cover"
+                  />
+                  {manualImageUris.length > 1 ? (
+                    <View style={styles.manualPreviewRow}>
+                      {manualImageUris.slice(1).map((uri) => (
+                        <Image
+                          key={uri}
+                          source={{ uri }}
+                          style={styles.manualPreviewThumb}
+                          resizeMode="cover"
+                        />
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
               ) : null}
               <View style={styles.modalField}>
                 <ThemedText
@@ -3197,6 +3228,21 @@ const styles = StyleSheet.create({
     height: 180,
     borderRadius: 14,
     borderWidth: 2,
+    borderColor: PREMIUM_COLORS.glass_border,
+  },
+  manualPreviewGroup: {
+    width: "100%",
+    gap: 10,
+  },
+  manualPreviewRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  manualPreviewThumb: {
+    flex: 1,
+    height: 80,
+    borderRadius: 12,
+    borderWidth: 1,
     borderColor: PREMIUM_COLORS.glass_border,
   },
   modalMeta: {

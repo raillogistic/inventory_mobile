@@ -23,7 +23,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { useRouter } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import { useAuth } from "@/hooks/use-auth";
 
 /**
@@ -590,6 +590,16 @@ export default function LoginScreen() {
 
   return (
     <View style={styles.screen}>
+      <Stack.Screen
+        options={{
+          headerShown: true,
+          headerTransparent: true,
+          title: "",
+          headerTintColor: COLORS.text_primary,
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: "transparent" },
+        }}
+      />
       <StatusBar
         barStyle="light-content"
         backgroundColor="transparent"
@@ -661,7 +671,7 @@ export default function LoginScreen() {
               />
             </View>
             <Text style={styles.brand_tagline}>
-              Système de Gestion d'Inventaire
+              Système de Gestion d&apos;Inventaire
             </Text>
           </Animated.View>
 
@@ -727,7 +737,9 @@ export default function LoginScreen() {
                 {/* Formulaire */}
                 <View style={styles.form}>
                   <View style={styles.field_group}>
-                    <Text style={styles.field_label}>Nom d'utilisateur</Text>
+                    <Text style={styles.field_label}>
+                      Nom d&apos;utilisateur
+                    </Text>
                     <StyledInput
                       icon="person.fill"
                       placeholder="Entrez votre identifiant"
@@ -822,7 +834,7 @@ export default function LoginScreen() {
                 color={COLORS.text_muted}
               />
               <Text style={styles.footer_text}>
-                Direction des Systèmes d&apos;Information
+                Direction des Systèmes d&apos;Information et Numérisation
               </Text>
             </View>
             <Text style={styles.copyright_text}>© 2025 Rail Logistic SPA</Text>
