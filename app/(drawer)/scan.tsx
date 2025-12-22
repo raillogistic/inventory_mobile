@@ -37,6 +37,7 @@ import {
   type EnregistrementInventaireEtat,
   type OfflineArticleEntry,
 } from "@/lib/graphql/inventory-operations";
+import { loadInventoryArticleByCode } from "@/lib/offline/inventory-offline-storage";
 import {
   createInventoryScan,
   loadInventoryScans,
@@ -847,7 +848,19 @@ export default function ScanScreen() {
         return;
       }
 
-      const lookup = normalizedCode ? articleLookup.get(normalizedCode) : null;
+      let lookup = normalizedCode ? articleLookup.get(normalizedCode) : null;
+      if (!lookup) {
+        try {
+          lookup = await loadInventoryArticleByCode(cleanedCode);
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Impossible de charger l'article.";
+          setScanSubmitError(message);
+          return;
+        }
+      }
       const isInLocation = normalizedCode
         ? locationArticleCodeSet.has(normalizedCode)
         : false;

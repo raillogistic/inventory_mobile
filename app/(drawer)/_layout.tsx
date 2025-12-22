@@ -157,23 +157,17 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="listes"
+        options={{
+          title: "Listes",
+        }}
+      />
+      <Drawer.Screen
         name="recap"
         options={{
           title: "Recap",
         }}
       />
-      {/* <Drawer.Screen
-        name="ecart-positif"
-        options={{
-          title: "Ecart positif",
-        }}
-      />
-      <Drawer.Screen
-        name="ecart-negatif"
-        options={{
-          title: "Ecart negatif",
-        }}
-      /> */}
       <Drawer.Screen
         name="history"
         options={{

@@ -358,6 +358,8 @@ export type OfflineArticleEntry = {
   code: string;
   /** Optional article description. */
   desc: string | null;
+  /** Current location inferred from the latest affectation. */
+  currentLocation: OfflineArticleLocation | null;
   /** Locations linked to the article via affectations. */
   locations: OfflineArticleLocation[];
 };
@@ -370,6 +372,8 @@ export type OfflineArticleQueryItem = {
   code: string;
   /** Optional article description. */
   desc: string | null;
+  /** Current location inferred from the latest affectation. */
+  current_location: OfflineArticleLocation | null;
   /** Affectations linked to the article. */
   affectation_set: OfflineArticleAffectation[];
 };
@@ -418,6 +422,10 @@ export const OFFLINE_ARTICLE_LIST_QUERY = gql`
       id
       code
       desc
+      current_location {
+        id
+        locationname
+      }
       affectation_set {
         location {
           id
@@ -436,6 +444,10 @@ export const OFFLINE_ARTICLE_PAGES_QUERY = gql`
         id
         code
         desc
+        current_location {
+          id
+          locationname
+        }
         affectation_set {
           location {
             id

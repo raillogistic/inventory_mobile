@@ -7,6 +7,7 @@ import {
 } from "@apollo/client";
 import { ApolloProvider } from "@apollo/client/react";
 import { setContext } from "@apollo/client/link/context";
+import { onError } from "@apollo/client/link/error";
 
 import { useAuth } from "@/hooks/use-auth";
 
@@ -25,6 +26,37 @@ function createApolloClient(
   accessToken: string | null
 ): ApolloClient<NormalizedCacheObject> {
   const httpLink = createHttpLink({ uri: apiUrl });
+  const errorLink = onError(({ graphQLErrors, networkError, operation }) => {
+    const operationName = operation.operationName;
+    const operationVariables = operation.variables;
+    const operationQuery = operation.query?.loc?.source?.body;
+
+    if (graphQLErrors && graphQLErrors.length > 0) {
+      console.error("[GraphQL error]", {
+        operation: operationName,
+        variables: operationVariables,
+        query: operationQuery,
+        graphQLErrors,
+      });
+    }
+
+    if (networkError) {
+      const networkErrorDetails = networkError as {
+        result?: unknown;
+        statusCode?: number;
+        bodyText?: string;
+      };
+      console.error("[Network error]", {
+        operation: operationName,
+        variables: operationVariables,
+        query: operationQuery,
+        networkError,
+        result: networkErrorDetails.result,
+        statusCode: networkErrorDetails.statusCode,
+        bodyText: networkErrorDetails.bodyText,
+      });
+    }
+  });
 
   const authLink = setContext((_, { headers }) => ({
     headers: {
@@ -34,7 +66,7 @@ function createApolloClient(
   }));
 
   return new ApolloClient({
-    link: authLink.concat(httpLink),
+    link: errorLink.concat(authLink).concat(httpLink),
     cache: new InMemoryCache(),
   });
 }

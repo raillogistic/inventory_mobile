@@ -120,6 +120,10 @@ type InventoryArticleRow = {
   code: string;
   /** Optional article description. */
   desc: string | null;
+  /** Current location identifier from latest affectation. */
+  current_location_id: string | null;
+  /** Current location name snapshot. */
+  current_location_name: string | null;
 };
 
 /** SQLite row for article location links. */
@@ -351,7 +355,10 @@ async function loadInventoryArticlesWithMaps(
   await ensureInventoryDatabase();
 
   const [articleResult, articleLocationResult] = await Promise.all([
-    runInventorySql("SELECT id, code, desc FROM inventory_articles ORDER BY code"),
+    runInventorySql(
+      "SELECT id, code, desc, current_location_id, current_location_name " +
+        "FROM inventory_articles ORDER BY code"
+    ),
     runInventorySql(
       "SELECT article_id, location_id, locationname FROM inventory_article_locations"
     ),
@@ -376,6 +383,15 @@ async function loadInventoryArticlesWithMaps(
     id: row.id,
     code: row.code,
     desc: row.desc ?? null,
+    currentLocation: row.current_location_id
+      ? {
+          id: row.current_location_id,
+          locationname:
+            row.current_location_name ??
+            locationLookup.get(row.current_location_id)?.locationname ??
+            "Lieu inconnu",
+        }
+      : null,
     locations: locationsByArticle.get(row.id) ?? [],
   }));
 }
@@ -386,6 +402,62 @@ async function loadInventoryArticlesWithMaps(
 export async function loadInventoryArticles(): Promise<OfflineArticleEntry[]> {
   const { locationLookup } = await loadLocationsWithMaps();
   return loadInventoryArticlesWithMaps(locationLookup);
+}
+
+/**
+ * Load a single article by code from SQLite.
+ */
+export async function loadInventoryArticleByCode(
+  code: string
+): Promise<OfflineArticleEntry | null> {
+  const normalized = code.trim().toUpperCase();
+  if (!normalized) {
+    return null;
+  }
+
+  await ensureInventoryDatabase();
+  const { locationLookup } = await loadLocationsWithMaps();
+
+  const articleResult = await runInventorySql<InventoryArticleRow>(
+    "SELECT id, code, desc, current_location_id, current_location_name " +
+      "FROM inventory_articles WHERE UPPER(code) = ? LIMIT 1",
+    [normalized]
+  );
+  const row = getInventorySqlRows<InventoryArticleRow>(articleResult)[0] ?? null;
+  if (!row) {
+    return null;
+  }
+
+  const locationResult = await runInventorySql<InventoryArticleLocationRow>(
+    "SELECT article_id, location_id, locationname " +
+      "FROM inventory_article_locations WHERE article_id = ?",
+    [row.id]
+  );
+  const locationRows =
+    getInventorySqlRows<InventoryArticleLocationRow>(locationResult);
+  const locations = locationRows.map((locationRow) => ({
+    id: locationRow.location_id,
+    locationname:
+      locationRow.locationname ??
+      locationLookup.get(locationRow.location_id)?.locationname ??
+      "Lieu inconnu",
+  }));
+
+  return {
+    id: row.id,
+    code: row.code,
+    desc: row.desc ?? null,
+    currentLocation: row.current_location_id
+      ? {
+          id: row.current_location_id,
+          locationname:
+            row.current_location_name ??
+            locationLookup.get(row.current_location_id)?.locationname ??
+            "Lieu inconnu",
+        }
+      : null,
+    locations,
+  };
 }
 
 /**
@@ -509,8 +581,15 @@ export async function saveInventoryOfflineCache(
     statements.push({
       sql:
         "INSERT OR REPLACE INTO inventory_articles " +
-        "(id, code, desc) VALUES (?, ?, ?)",
-      params: [article.id, article.code, article.desc ?? null],
+        "(id, code, desc, current_location_id, current_location_name) " +
+        "VALUES (?, ?, ?, ?, ?)",
+      params: [
+        article.id,
+        article.code,
+        article.desc ?? null,
+        article.currentLocation?.id ?? null,
+        article.currentLocation?.locationname ?? null,
+      ],
     });
 
     for (const location of article.locations ?? []) {

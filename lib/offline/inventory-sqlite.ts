@@ -27,7 +27,21 @@ const INVENTORY_DB_NAME = "inventory.db";
 let inventoryDatabase: SQLiteDatabase | null = null;
 let inventoryDatabasePromise: Promise<SQLiteDatabase> | null = null;
 let inventoryInitPromise: Promise<void> | null = null;
-let inventoryBatchQueue: Promise<void> = Promise.resolve();
+let inventoryOperationQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Serialize SQLite operations to prevent nested transactions.
+ */
+function enqueueInventoryOperation<T>(
+  operation: () => Promise<T>
+): Promise<T> {
+  const run = inventoryOperationQueue.then(operation, operation);
+  inventoryOperationQueue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
 
 /**
  * Open (or reuse) the SQLite database instance.
@@ -64,19 +78,21 @@ export async function runInventorySql<T>(
   sql: string,
   params: InventorySqlValue[] = []
 ): Promise<InventorySqlResult<T>> {
-  const db = await openInventoryDatabase();
+  return enqueueInventoryOperation(async () => {
+    const db = await openInventoryDatabase();
 
-  if (isSelectStatement(sql)) {
-    const rows = await db.getAllAsync<T>(sql, params);
-    return { rows, changes: 0, lastInsertRowId: null };
-  }
+    if (isSelectStatement(sql)) {
+      const rows = await db.getAllAsync<T>(sql, params);
+      return { rows, changes: 0, lastInsertRowId: null };
+    }
 
-  const result = await db.runAsync(sql, params);
-  return {
-    rows: [],
-    changes: result.changes ?? 0,
-    lastInsertRowId: result.lastInsertRowId ?? null,
-  };
+    const result = await db.runAsync(sql, params);
+    return {
+      rows: [],
+      changes: result.changes ?? 0,
+      lastInsertRowId: result.lastInsertRowId ?? null,
+    };
+  });
 }
 
 /**
@@ -89,18 +105,15 @@ export async function runInventorySqlBatch(
     return;
   }
 
-  const db = await openInventoryDatabase();
+  await enqueueInventoryOperation(async () => {
+    const db = await openInventoryDatabase();
 
-  const executeBatch = async () => {
     await db.withTransactionAsync(async () => {
       for (const statement of statements) {
         await db.runAsync(statement.sql, statement.params ?? []);
       }
     });
-  };
-
-  inventoryBatchQueue = inventoryBatchQueue.then(executeBatch, executeBatch);
-  await inventoryBatchQueue;
+  });
 }
 
 /**
@@ -163,7 +176,9 @@ async function initializeInventoryDatabase(): Promise<void> {
         "CREATE TABLE IF NOT EXISTS inventory_articles (" +
         "id TEXT PRIMARY KEY NOT NULL, " +
         "code TEXT NOT NULL, " +
-        "desc TEXT" +
+        "desc TEXT, " +
+        "current_location_id TEXT, " +
+        "current_location_name TEXT" +
         ")",
     },
     {
@@ -289,11 +304,35 @@ async function initializeInventoryDatabase(): Promise<void> {
 }
 
 /**
+ * Apply schema migrations for existing inventories.
+ */
+async function migrateInventoryDatabase(): Promise<void> {
+  const columnsResult = await runInventorySql<{ name: string }>(
+    "PRAGMA table_info(inventory_articles)"
+  );
+  const columnNames = new Set(columnsResult.rows.map((row) => row.name));
+
+  if (!columnNames.has("current_location_id")) {
+    await runInventorySql(
+      "ALTER TABLE inventory_articles ADD COLUMN current_location_id TEXT"
+    );
+  }
+
+  if (!columnNames.has("current_location_name")) {
+    await runInventorySql(
+      "ALTER TABLE inventory_articles ADD COLUMN current_location_name TEXT"
+    );
+  }
+}
+
+/**
  * Ensure the inventory database is initialized before use.
  */
 export async function ensureInventoryDatabase(): Promise<void> {
   if (!inventoryInitPromise) {
-    inventoryInitPromise = initializeInventoryDatabase();
+    inventoryInitPromise = initializeInventoryDatabase().then(
+      migrateInventoryDatabase
+    );
   }
 
   await inventoryInitPromise;

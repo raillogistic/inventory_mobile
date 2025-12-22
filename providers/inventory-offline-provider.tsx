@@ -184,6 +184,7 @@ function mapOfflineArticles(
       id: item.id,
       code: item.code,
       desc: item.desc ?? null,
+      currentLocation: item.current_location ?? null,
       locations,
     };
   });
@@ -206,6 +207,7 @@ async function loadOfflineArticles(client: ReturnType<typeof useApolloClient>) {
       variables: { page: currentPage, page_size: OFFLINE_SYNC_LIMITS.articles },
       fetchPolicy: "network-only",
     });
+    console.log({ page: currentPage, page_size: OFFLINE_SYNC_LIMITS.articles });
 
     const pagePayload = response.data?.article_pages ?? null;
     const pageItems = pagePayload?.data ?? [];
@@ -226,7 +228,8 @@ export function InventoryOfflineProvider({
 }: InventoryOfflineProviderProps) {
   const client = useApolloClient();
   const [cache, setCache] = useState<InventoryOfflineCache>(EMPTY_CACHE);
-  const [metadata, setMetadata] = useState<InventoryOfflineMetadata>(EMPTY_METADATA);
+  const [metadata, setMetadata] =
+    useState<InventoryOfflineMetadata>(EMPTY_METADATA);
   const [isHydrated, setIsHydrated] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isScanSyncing, setIsScanSyncing] = useState(false);
