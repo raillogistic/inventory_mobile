@@ -93,6 +93,8 @@ export type InventoryScanSyncSummary = {
   syncedCount: number;
   /** Number of scans that failed to sync. */
   failedCount: number;
+  /** Optional error details for failed scans. */
+  errors?: string[];
 };
 
 /**
@@ -422,6 +424,7 @@ export function InventoryOfflineProvider({
       }
 
       const syncUpdates: InventoryScanSyncUpdateInput[] = [];
+      const errorDetails: string[] = [];
       let failedCount = 0;
 
       for (const batch of chunkItems(pendingScans, SCAN_SYNC_BATCH_SIZE)) {
@@ -446,6 +449,11 @@ export function InventoryOfflineProvider({
             syncUpdates.push({ id: scan.id, remoteId: result.remote_id });
           } else {
             failedCount += 1;
+            const reason =
+              result?.errors && result.errors.length > 0
+                ? result.errors.join(", ")
+                : "Erreur inconnue.";
+            errorDetails.push(`${scan.codeArticle}: ${reason}`);
           }
         }
       }
@@ -454,11 +462,19 @@ export function InventoryOfflineProvider({
         await markInventoryScansSynced(syncUpdates);
       }
 
+      if (errorDetails.length > 0) {
+        const sample = errorDetails.slice(0, 3).join(" | ");
+        const suffix =
+          errorDetails.length > 3 ? ` (+${errorDetails.length - 3} autres)` : "";
+        setScanSyncError(`Echecs de sync: ${sample}${suffix}`);
+      }
+
       const syncedCount = syncUpdates.length;
       return {
         totalCount: pendingScans.length,
         syncedCount,
         failedCount,
+        errors: errorDetails.length > 0 ? errorDetails : undefined,
       };
     } catch (error) {
       const message =

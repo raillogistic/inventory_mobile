@@ -30,8 +30,11 @@ import { useFocusEffect } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 
 import { ThemedText } from "@/components/themed-text";
-import { ThemedView } from "@/components/themed-view";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import {
+  PremiumScreenWrapper,
+  PREMIUM_COLORS,
+} from "@/components/ui/premium-theme";
 import { useComptageSession } from "@/hooks/use-comptage-session";
 import { useInventoryOffline } from "@/hooks/use-inventory-offline";
 import { useThemeColor } from "@/hooks/use-theme-color";
@@ -1700,14 +1703,19 @@ export default function ScanScreen() {
   ]);
   if (!campaignId || !groupId || !locationId) {
     return (
-      <ThemedView style={styles.container}>
+      <PremiumScreenWrapper>
         <View style={styles.missingContainer}>
           <ThemedText type="title">Selection incomplete</ThemedText>
-          <ThemedText style={[styles.missingText, { color: mutedColor }]}>
+          <ThemedText
+            style={[styles.missingText, { color: PREMIUM_COLORS.text_muted }]}
+          >
             Choisissez une campagne, un groupe et un lieu avant de scanner.
           </ThemedText>
           <TouchableOpacity
-            style={[styles.retryButton, { backgroundColor: highlightColor }]}
+            style={[
+              styles.retryButton,
+              { backgroundColor: PREMIUM_COLORS.accent_primary },
+            ]}
             onPress={() => router.push("/(drawer)/lieux")}
           >
             <ThemedText style={styles.retryButtonText}>
@@ -1715,12 +1723,12 @@ export default function ScanScreen() {
             </ThemedText>
           </TouchableOpacity>
         </View>
-      </ThemedView>
+      </PremiumScreenWrapper>
     );
   }
 
   return (
-    <ThemedView style={styles.container}>
+    <PremiumScreenWrapper>
       <FlatList
         data={activeListItems}
         keyExtractor={keyExtractor}
@@ -2684,7 +2692,7 @@ export default function ScanScreen() {
           </Pressable>
         </Pressable>
       </Modal>
-    </ThemedView>
+    </PremiumScreenWrapper>
   );
 }
 

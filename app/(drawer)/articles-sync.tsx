@@ -174,8 +174,14 @@ export default function ArticlesSyncScreen() {
         return;
       }
 
+      const errorSummary =
+        summary.errors && summary.errors.length > 0
+          ? ` (${summary.errors.slice(0, 2).join(" | ")}${
+              summary.errors.length > 2 ? " +..." : ""
+            })`
+          : "";
       showSyncMessage(
-        `${summary.syncedCount}/${summary.totalCount} articles synchronisés.`
+        `${summary.syncedCount}/${summary.totalCount} articles synchronisés.${errorSummary}`
       );
     } catch (error) {
       const message =
