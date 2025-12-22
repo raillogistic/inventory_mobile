@@ -11,6 +11,7 @@ import {
   BackHandler,
   FlatList,
   Image,
+  ScrollView,
   Modal,
   Pressable,
   StyleSheet,
@@ -295,7 +296,9 @@ export default function ScanScreen() {
   const [etatMessage, setEtatMessage] = useState<string | null>(null);
   const [scanRecords, setScanRecords] = useState<InventoryScanRecord[]>([]);
   const [scansLoading, setScansLoading] = useState(false);
-  const [scansErrorMessage, setScansErrorMessage] = useState<string | null>(null);
+  const [scansErrorMessage, setScansErrorMessage] = useState<string | null>(
+    null
+  );
   const [isSubmittingScan, setIsSubmittingScan] = useState(false);
   const [scanDetail, setScanDetail] = useState<ScanDetail | null>(null);
   const [etatLoading, setEtatLoading] = useState(false);
@@ -707,7 +710,11 @@ export default function ScanScreen() {
     () =>
       scanBorderAnim.interpolate({
         inputRange: [0, 0.5, 1],
-        outputRange: ["rgba(15,23,42,0.85)", "rgba(30,41,59,0.7)", "rgba(15,23,42,0.85)"],
+        outputRange: [
+          "rgba(15,23,42,0.85)",
+          "rgba(30,41,59,0.7)",
+          "rgba(15,23,42,0.85)",
+        ],
       }),
     [scanBorderAnim]
   );
@@ -1939,7 +1946,10 @@ export default function ScanScreen() {
                 onRequestClose={handleManualCaptureClose}
               >
                 <View style={styles.cameraModalOverlay}>
-                  <CameraView style={styles.cameraPreview} ref={manualCameraRef} />
+                  <CameraView
+                    style={styles.cameraPreview}
+                    ref={manualCameraRef}
+                  />
                   <View style={styles.cameraHud}>
                     <ThemedText style={styles.cameraHudTitle}>
                       Photo article
@@ -2173,9 +2183,7 @@ export default function ScanScreen() {
             <View style={styles.emptyContainer}>
               {activeTab === "scanned" ? (
                 <>
-                  <ThemedText type="subtitle">
-                    Aucun scan enregistre
-                  </ThemedText>
+                  <ThemedText type="subtitle">Aucun scan enregistre</ThemedText>
                   <ThemedText
                     style={[styles.emptyMessage, { color: mutedColor }]}
                   >
@@ -2321,13 +2329,19 @@ export default function ScanScreen() {
                   </View>
                 ) : null}
                 <View style={styles.modalField}>
-                  <ThemedText style={[styles.modalFieldLabel, { color: mutedColor }]}>
+                  <ThemedText
+                    style={[styles.modalFieldLabel, { color: mutedColor }]}
+                  >
                     Observation
                   </ThemedText>
                   <TextInput
                     style={[
                       styles.modalInput,
-                      { borderColor, color: inputTextColor, backgroundColor: surfaceColor },
+                      {
+                        borderColor,
+                        color: inputTextColor,
+                        backgroundColor: surfaceColor,
+                      },
                     ]}
                     placeholder="Ajouter une observation"
                     placeholderTextColor={placeholderColor}
@@ -2337,13 +2351,19 @@ export default function ScanScreen() {
                   />
                 </View>
                 <View style={styles.modalField}>
-                  <ThemedText style={[styles.modalFieldLabel, { color: mutedColor }]}>
+                  <ThemedText
+                    style={[styles.modalFieldLabel, { color: mutedColor }]}
+                  >
                     Numero de serie (optionnel)
                   </ThemedText>
                   <TextInput
                     style={[
                       styles.modalInput,
-                      { borderColor, color: inputTextColor, backgroundColor: surfaceColor },
+                      {
+                        borderColor,
+                        color: inputTextColor,
+                        backgroundColor: surfaceColor,
+                      },
                     ]}
                     placeholder="Saisir un numero de serie"
                     placeholderTextColor={placeholderColor}
@@ -2411,7 +2431,10 @@ export default function ScanScreen() {
                     disabled={etatLoading}
                   >
                     <ThemedText
-                      style={[styles.modalButtonSecondaryText, { color: textColor }]}
+                      style={[
+                        styles.modalButtonSecondaryText,
+                        { color: textColor },
+                      ]}
                     >
                       Ne pas enregistrer
                     </ThemedText>
@@ -2474,7 +2497,10 @@ export default function ScanScreen() {
           <Pressable
             style={[
               styles.modalCard,
-              { backgroundColor: modalCardColor, borderColor: manualActionColor },
+              {
+                backgroundColor: modalCardColor,
+                borderColor: manualActionColor,
+              },
             ]}
             onPress={() => {}}
           >
@@ -2486,7 +2512,11 @@ export default function ScanScreen() {
             >
               <IconSymbol name="xmark" size={16} color={mutedColor} />
             </TouchableOpacity>
-            <View style={styles.modalContent}>
+            <ScrollView
+              style={styles.manualFormScroll}
+              contentContainerStyle={styles.manualFormContent}
+              showsVerticalScrollIndicator={false}
+            >
               <ThemedText type="title" style={styles.modalCodeText}>
                 Enregistrement manuel
               </ThemedText>
@@ -2498,7 +2528,9 @@ export default function ScanScreen() {
                 />
               ) : null}
               <View style={styles.modalField}>
-                <ThemedText style={[styles.modalFieldLabel, { color: mutedColor }]}>
+                <ThemedText
+                  style={[styles.modalFieldLabel, { color: mutedColor }]}
+                >
                   Observation
                 </ThemedText>
                 <TextInput
@@ -2518,7 +2550,9 @@ export default function ScanScreen() {
                 />
               </View>
               <View style={styles.modalField}>
-                <ThemedText style={[styles.modalFieldLabel, { color: mutedColor }]}>
+                <ThemedText
+                  style={[styles.modalFieldLabel, { color: mutedColor }]}
+                >
                   Numero de serie
                 </ThemedText>
                 <TextInput
@@ -2583,7 +2617,7 @@ export default function ScanScreen() {
                   {manualError}
                 </ThemedText>
               ) : null}
-            </View>
+            </ScrollView>
 
             <View style={styles.modalButtonRow}>
               <TouchableOpacity
@@ -2595,7 +2629,10 @@ export default function ScanScreen() {
                 disabled={isManualSaving}
               >
                 <ThemedText
-                  style={[styles.modalButtonSecondaryText, { color: textColor }]}
+                  style={[
+                    styles.modalButtonSecondaryText,
+                    { color: textColor },
+                  ]}
                 >
                   Annuler
                 </ThemedText>

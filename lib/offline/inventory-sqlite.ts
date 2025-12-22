@@ -28,6 +28,7 @@ let inventoryDatabase: SQLiteDatabase | null = null;
 let inventoryDatabasePromise: Promise<SQLiteDatabase> | null = null;
 let inventoryInitPromise: Promise<void> | null = null;
 let inventoryOperationQueue: Promise<void> = Promise.resolve();
+let inventoryDatabaseConfigured = false;
 
 /**
  * Serialize SQLite operations to prevent nested transactions.
@@ -56,6 +57,21 @@ async function openInventoryDatabase(): Promise<SQLiteDatabase> {
   }
 
   inventoryDatabase = await inventoryDatabasePromise;
+
+  if (!inventoryDatabaseConfigured) {
+    try {
+      await inventoryDatabase.execAsync("PRAGMA journal_mode = WAL;");
+    } catch {
+      // Ignore WAL configuration errors on unsupported platforms.
+    }
+    try {
+      await inventoryDatabase.execAsync("PRAGMA busy_timeout = 5000;");
+    } catch {
+      // Ignore busy timeout configuration errors.
+    }
+    inventoryDatabaseConfigured = true;
+  }
+
   return inventoryDatabase;
 }
 

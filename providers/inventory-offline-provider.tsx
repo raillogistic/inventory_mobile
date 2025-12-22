@@ -343,6 +343,10 @@ export function InventoryOfflineProvider({
 
   /** Trigger a full offline sync against the GraphQL API. */
   const syncAll = useCallback(async () => {
+    if (isSyncing) {
+      return;
+    }
+
     setIsSyncing(true);
     setSyncError(null);
 
@@ -398,7 +402,7 @@ export function InventoryOfflineProvider({
     } finally {
       setIsSyncing(false);
     }
-  }, [client]);
+  }, [client, isSyncing]);
 
   /** Upload local scan records to the backend API. */
   const syncScans = useCallback(async (): Promise<InventoryScanSyncSummary> => {
