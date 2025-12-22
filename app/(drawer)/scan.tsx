@@ -111,6 +111,10 @@ type ScanDetail = {
   description: string | null;
   /** Optional captured image URI. */
   imageUri: string | null;
+  /** Optional short description for temporary articles. */
+  customDesc: string | null;
+  /** Source of the scan capture. */
+  source: ScanSource | null;
   /** Status used to highlight the scanned article. */
   status: LocationArticleStatus;
   /** Short label for the scan status. */
@@ -296,6 +300,8 @@ export default function ScanScreen() {
     useState<EnregistrementInventaireEtat | null>(null);
   const [observationValue, setObservationValue] = useState<string>("");
   const [serialNumberValue, setSerialNumberValue] = useState<string>("");
+  const [customDescriptionValue, setCustomDescriptionValue] =
+    useState<string>("");
   const [activeTab, setActiveTab] = useState<ScanListTab>("scanned");
   const [scanButtonLayout, setScanButtonLayout] =
     useState<ScanButtonLayout | null>(null);
@@ -609,6 +615,41 @@ export default function ScanScreen() {
     activeListItems.length === 0 &&
     !isRefreshing;
   const cameraOverlayLabel = isSubmittingScan ? "Scan en cours..." : null;
+  const isMissingDraft = Boolean(
+    scanDetail && scanDetail.status === "missing" && !scanDetail.id
+  );
+  const canSubmitScanDetail = useMemo(() => {
+    if (!scanDetail) {
+      return false;
+    }
+
+    const trimmedObservation = observationValue.trim();
+    const trimmedSerialNumber = serialNumberValue.trim();
+    const trimmedCustomDescription = customDescriptionValue.trim();
+    const hasUpdate =
+      Boolean(selectedEtat) ||
+      trimmedObservation.length > 0 ||
+      trimmedSerialNumber.length > 0 ||
+      trimmedCustomDescription.length > 0;
+
+    if (scanDetail.status === "missing" && !scanDetail.id) {
+      return (
+        Boolean(selectedEtat) &&
+        trimmedCustomDescription.length > 0 &&
+        Boolean(scanDetail.imageUri) &&
+        !etatLoading
+      );
+    }
+
+    return hasUpdate && !etatLoading;
+  }, [
+    customDescriptionValue,
+    etatLoading,
+    observationValue,
+    scanDetail,
+    selectedEtat,
+    serialNumberValue,
+  ]);
   const scanBorderColor = useMemo(
     () =>
       scanBorderAnim.interpolate({
@@ -666,6 +707,7 @@ export default function ScanScreen() {
             id: scan.id,
             code: scan.codeArticle,
             description: scan.articleDescription ?? lookup?.desc ?? null,
+            customDesc: scan.customDesc ?? null,
             observation: scan.observation ?? null,
             serialNumber: scan.serialNumber ?? null,
             capturedAt: scan.capturedAt,
@@ -732,6 +774,7 @@ export default function ScanScreen() {
     setScanSubmitError(null);
     setScansErrorMessage(null);
     setEtatErrorMessage(null);
+    setCustomDescriptionValue("");
     scanLockRef.current = false;
     setIsScanLocked(false);
   }, [campaignId, groupId, locationId]);
@@ -744,6 +787,7 @@ export default function ScanScreen() {
     setInfoMessage(null);
     setEtatMessage(null);
     setEtatErrorMessage(null);
+    setCustomDescriptionValue("");
   }, []);
 
   /** Close the scan detail modal and prepare for the next scan. */
@@ -756,6 +800,7 @@ export default function ScanScreen() {
     setSelectedEtat(null);
     setObservationValue("");
     setSerialNumberValue("");
+    setCustomDescriptionValue("");
     if (hasCameraPermission) {
       setIsCameraActive(true);
     }
@@ -803,6 +848,13 @@ export default function ScanScreen() {
     setEtatErrorMessage(null);
   }, []);
 
+  /** Update the custom description value. */
+  const handleCustomDescriptionChange = useCallback((value: string) => {
+    setCustomDescriptionValue(value);
+    setEtatMessage(null);
+    setEtatErrorMessage(null);
+  }, []);
+
   /** Update the serial number value. */
   const handleSerialNumberChange = useCallback((value: string) => {
     setSerialNumberValue(value);
@@ -817,6 +869,7 @@ export default function ScanScreen() {
     }
     setObservationValue(scanDetail.observation ?? "");
     setSerialNumberValue(scanDetail.serialNumber ?? "");
+    setCustomDescriptionValue(scanDetail.customDesc ?? "");
   }, [scanDetail]);
 
   /** Trigger a success haptic feedback on supported devices. */
@@ -930,6 +983,8 @@ export default function ScanScreen() {
           code: existingScan.code,
           description: detailDescription,
           imageUri,
+          customDesc: existingScan.customDesc ?? null,
+          source: null,
           status,
           statusLabel,
           capturedAt: existingScan.capturedAt,
@@ -950,6 +1005,28 @@ export default function ScanScreen() {
       setInfoMessage(null);
 
       const locationName = session.location?.locationname ?? "Lieu inconnu";
+      if (status === "missing") {
+        setScanDetail({
+          id: null,
+          code: cleanedCode,
+          description: detailDescription,
+          imageUri,
+          customDesc: null,
+          source,
+          status,
+          statusLabel,
+          capturedAt: new Date().toISOString(),
+          alreadyScanned: false,
+          observation: null,
+          serialNumber: null,
+        });
+        setIsCameraActive(false);
+        setSelectedEtat(null);
+        setEtatMessage(null);
+        setCodeValue("");
+        await triggerSuccessHaptic();
+        return;
+      }
       setIsSubmittingScan(true);
       try {
         const record = await createInventoryScan({
@@ -976,6 +1053,8 @@ export default function ScanScreen() {
           code: record.codeArticle,
           description: record.articleDescription ?? detailDescription,
           imageUri: record.imageUri,
+          customDesc: record.customDesc ?? null,
+          source: source,
           status,
           statusLabel,
           capturedAt: record.capturedAt,
@@ -1204,26 +1283,91 @@ export default function ScanScreen() {
 
   /** Persist the selected state and move to the next scan. */
   const handleConfirmEtat = useCallback(async () => {
-    if (!scanDetail?.id) {
+    if (!scanDetail) {
       setEtatMessage("Impossible d'identifier l'enregistrement.");
       return;
     }
 
     const trimmedObservation = observationValue.trim();
     const trimmedSerialNumber = serialNumberValue.trim();
+    const trimmedCustomDescription = customDescriptionValue.trim();
     const hasObservation = trimmedObservation.length > 0;
     const hasSerialNumber = trimmedSerialNumber.length > 0;
+    const hasCustomDescription = trimmedCustomDescription.length > 0;
+    const isMissing = scanDetail.status === "missing";
+    const isDraft = !scanDetail.id;
     const shouldUpdate =
-      Boolean(selectedEtat) || hasObservation || hasSerialNumber;
+      Boolean(selectedEtat) ||
+      hasObservation ||
+      hasSerialNumber ||
+      hasCustomDescription;
 
-    if (!selectedEtat && scanDetail.status !== "missing" && !shouldUpdate) {
+    if (isMissing) {
+      if (!selectedEtat) {
+        setEtatMessage("Choisissez un etat.");
+        return;
+      }
+      if (isDraft && !hasCustomDescription) {
+        setEtatMessage("Le libelle court est requis.");
+        return;
+      }
+      if (isDraft && !scanDetail.imageUri) {
+        setEtatMessage("Une image est requise pour l'article inconnu.");
+        return;
+      }
+    } else if (!selectedEtat && !shouldUpdate) {
       setEtatMessage("Choisissez un etat ou ajoutez une observation.");
       return;
     }
 
     setEtatMessage(null);
 
-    if (shouldUpdate) {
+    let savedRecord: InventoryScanRecord | null = null;
+    const locationName = session.location?.locationname ?? "Lieu inconnu";
+
+    if (isDraft) {
+      if (!campaignId || !groupId || !locationId) {
+        setEtatMessage("Selection incomplete. Retournez aux selections.");
+        return;
+      }
+
+      setEtatLoading(true);
+      setEtatErrorMessage(null);
+      try {
+        savedRecord = await createInventoryScan({
+          campaignId,
+          groupId,
+          locationId,
+          locationName,
+          codeArticle: scanDetail.code,
+          articleId: null,
+          articleDescription: scanDetail.description ?? null,
+          customDesc: hasCustomDescription ? trimmedCustomDescription : null,
+          observation: hasObservation ? trimmedObservation : null,
+          serialNumber: hasSerialNumber ? trimmedSerialNumber : null,
+          etat: selectedEtat ?? null,
+          capturedAt: scanDetail.capturedAt,
+          sourceScan: scanDetail.source ?? "manual",
+          imageUri: scanDetail.imageUri,
+          status: scanDetail.status,
+          statusLabel: scanDetail.statusLabel,
+        });
+
+        setScanRecords((current) => {
+          const next = [savedRecord, ...current];
+          return next.slice(0, SCAN_STATUS_LIMIT);
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Les informations n'ont pas pu etre enregistrees.";
+        setEtatErrorMessage(message);
+        return;
+      } finally {
+        setEtatLoading(false);
+      }
+    } else if (shouldUpdate && scanDetail.id) {
       setEtatLoading(true);
       setEtatErrorMessage(null);
       try {
@@ -1231,6 +1375,9 @@ export default function ScanScreen() {
           id: scanDetail.id,
           etat: selectedEtat ?? null,
           observation: hasObservation ? trimmedObservation : null,
+          customDesc: hasCustomDescription
+            ? trimmedCustomDescription
+            : scanDetail.customDesc ?? null,
           serialNumber: hasSerialNumber ? trimmedSerialNumber : null,
         });
 
@@ -1243,6 +1390,9 @@ export default function ScanScreen() {
                   observation: hasObservation
                     ? trimmedObservation
                     : record.observation ?? null,
+                  customDesc: hasCustomDescription
+                    ? trimmedCustomDescription
+                    : record.customDesc ?? null,
                   serialNumber: hasSerialNumber
                     ? trimmedSerialNumber
                     : record.serialNumber ?? null,
@@ -1262,8 +1412,14 @@ export default function ScanScreen() {
       }
     }
 
+    const recordId = savedRecord?.id ?? scanDetail.id;
+    if (!recordId) {
+      setEtatErrorMessage("Impossible d'enregistrer l'article.");
+      return;
+    }
+
     const historyItem: ScanHistoryItem = {
-      id: `${scanDetail.id}-${scanDetail.capturedAt}`,
+      id: `${recordId}-${scanDetail.capturedAt}`,
       code: scanDetail.code,
       description: scanDetail.description,
       imageUri: scanDetail.imageUri,
@@ -1271,7 +1427,7 @@ export default function ScanScreen() {
       statusLabel: scanDetail.statusLabel,
       capturedAt: scanDetail.capturedAt,
       locationId: session.location?.id ?? null,
-      locationName: session.location?.locationname ?? "Lieu inconnu",
+      locationName: locationName,
       etat: selectedEtat ?? null,
       observation: hasObservation ? trimmedObservation : null,
       serialNumber: hasSerialNumber ? trimmedSerialNumber : null,
@@ -1279,12 +1435,18 @@ export default function ScanScreen() {
     await addScanHistoryItem(historyItem);
     handleCloseScanModal();
   }, [
+    campaignId,
+    customDescriptionValue,
+    groupId,
     handleCloseScanModal,
+    locationId,
     scanDetail?.capturedAt,
     scanDetail?.code,
+    scanDetail?.customDesc,
     scanDetail?.description,
     scanDetail?.id,
     scanDetail?.imageUri,
+    scanDetail?.source,
     scanDetail?.status,
     scanDetail?.statusLabel,
     observationValue,
@@ -1292,6 +1454,7 @@ export default function ScanScreen() {
     selectedEtat,
     session.location?.id,
     session.location?.locationname,
+    createInventoryScan,
     updateInventoryScanDetails,
   ]);
   if (!campaignId || !groupId || !locationId) {
@@ -1783,6 +1946,29 @@ export default function ScanScreen() {
                     Deja scanne. Vous pouvez modifier l'etat ci-dessous.
                   </ThemedText>
                 ) : null}
+                {scanDetail.status === "missing" ? (
+                  <View style={styles.modalField}>
+                    <ThemedText
+                      style={[styles.modalFieldLabel, { color: mutedColor }]}
+                    >
+                      Libelle court
+                    </ThemedText>
+                    <TextInput
+                      style={[
+                        styles.modalInput,
+                        {
+                          borderColor,
+                          color: inputTextColor,
+                          backgroundColor: surfaceColor,
+                        },
+                      ]}
+                      placeholder="Saisir un libelle court"
+                      placeholderTextColor={placeholderColor}
+                      value={customDescriptionValue}
+                      onChangeText={handleCustomDescriptionChange}
+                    />
+                  </View>
+                ) : null}
                 <View style={styles.modalField}>
                   <ThemedText style={[styles.modalFieldLabel, { color: mutedColor }]}>
                     Observation
@@ -1815,77 +2001,111 @@ export default function ScanScreen() {
                     autoCapitalize="characters"
                   />
                 </View>
-                {scanDetail.status === "missing" ? null : (
-                  <View style={styles.etatSection}>
-                    <ThemedText type="subtitle">Etat du materiel</ThemedText>
-                    <View style={styles.etatOptions}>
-                      {ETAT_OPTIONS.map((option) => {
-                        const isSelected = selectedEtat === option.value;
-                        return (
-                          <TouchableOpacity
-                            key={option.value}
-                            style={[
-                              styles.etatOption,
-                              {
-                                borderColor,
-                                backgroundColor: isSelected
-                                  ? "rgba(34,197,94,0.18)"
-                                  : "transparent",
-                              },
-                            ]}
-                            onPress={() => handleEtatSelect(option.value)}
-                          >
-                            <View style={styles.etatOptionContent}>
-                              <ThemedText
-                                style={[
-                                  styles.etatOptionText,
-                                  {
-                                    color: isSelected ? textColor : mutedColor,
-                                  },
-                                ]}
-                              >
-                                {option.label}
-                              </ThemedText>
-                              <IconSymbol
-                                name="checkmark.circle.fill"
-                                size={22}
-                                color={isSelected ? "#22C55E" : "#94A3B8"}
-                              />
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    {etatErrorDisplay ? (
-                      <ThemedText style={styles.etatErrorText}>
-                        {etatErrorDisplay}
-                      </ThemedText>
-                    ) : null}
+                <View style={styles.etatSection}>
+                  <ThemedText type="subtitle">Etat du materiel</ThemedText>
+                  <View style={styles.etatOptions}>
+                    {ETAT_OPTIONS.map((option) => {
+                      const isSelected = selectedEtat === option.value;
+                      return (
+                        <TouchableOpacity
+                          key={option.value}
+                          style={[
+                            styles.etatOption,
+                            {
+                              borderColor,
+                              backgroundColor: isSelected
+                                ? "rgba(34,197,94,0.18)"
+                                : "transparent",
+                            },
+                          ]}
+                          onPress={() => handleEtatSelect(option.value)}
+                        >
+                          <View style={styles.etatOptionContent}>
+                            <ThemedText
+                              style={[
+                                styles.etatOptionText,
+                                {
+                                  color: isSelected ? textColor : mutedColor,
+                                },
+                              ]}
+                            >
+                              {option.label}
+                            </ThemedText>
+                            <IconSymbol
+                              name="checkmark.circle.fill"
+                              size={22}
+                              color={isSelected ? "#22C55E" : "#94A3B8"}
+                            />
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
-                )}
+                  {etatErrorDisplay ? (
+                    <ThemedText style={styles.etatErrorText}>
+                      {etatErrorDisplay}
+                    </ThemedText>
+                  ) : null}
+                </View>
               </View>
 
-              <TouchableOpacity
-                style={[
-                  styles.modalButton,
-                  {
-                    backgroundColor: highlightColor,
-                    opacity: selectedEtat && !etatLoading ? 1 : 0.6,
-                  },
-                ]}
-                onPress={handleConfirmEtat}
-                disabled={
-                  scanDetail.status !== "missing" && (!selectedEtat || etatLoading)
-                }
-              >
-                {etatLoading ? (
-                  <ActivityIndicator color={buttonTextColor} size="small" />
+              {isMissingDraft ? (
+                <View style={styles.modalButtonRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalButtonSecondary,
+                      { borderColor: highlightColor },
+                    ]}
+                    onPress={handleCloseScanModal}
+                    disabled={etatLoading}
+                  >
+                    <ThemedText
+                      style={[styles.modalButtonSecondaryText, { color: textColor }]}
+                    >
+                      Ne pas enregistrer
+                    </ThemedText>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalButton,
+                      {
+                        backgroundColor: highlightColor,
+                        opacity: canSubmitScanDetail ? 1 : 0.6,
+                      },
+                    ]}
+                    onPress={handleConfirmEtat}
+                    disabled={!canSubmitScanDetail}
+                  >
+                    {etatLoading ? (
+                      <ActivityIndicator color={buttonTextColor} size="small" />
+                    ) : (
+                      <ThemedText style={styles.modalButtonText}>
+                        Creer article temporaire
+                      </ThemedText>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={[
+                    styles.modalButton,
+                    {
+                      backgroundColor: highlightColor,
+                      opacity: canSubmitScanDetail ? 1 : 0.6,
+                    },
+                  ]}
+                  onPress={handleConfirmEtat}
+                  disabled={!canSubmitScanDetail}
+                >
+                  {etatLoading ? (
+                    <ActivityIndicator color={buttonTextColor} size="small" />
                   ) : (
                     <ThemedText style={styles.modalButtonText}>
                       Scanner suivant
                     </ThemedText>
                   )}
-              </TouchableOpacity>
+                </TouchableOpacity>
+              )}
             </Pressable>
           ) : null}
         </Pressable>
@@ -2299,6 +2519,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#FFFFFF",
+  },
+  modalButtonRow: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
+  },
+  modalButtonSecondary: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  modalButtonSecondaryText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   etatSection: {
     width: "100%",

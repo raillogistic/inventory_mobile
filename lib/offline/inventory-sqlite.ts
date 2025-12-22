@@ -209,6 +209,8 @@ async function initializeInventoryDatabase(): Promise<void> {
         "groupe_id TEXT NOT NULL, " +
         "lieu_id TEXT NOT NULL, " +
         "lieu_name TEXT NOT NULL, " +
+        "commentaire TEXT, " +
+        "custom_desc TEXT, " +
         "observation TEXT, " +
         "serial_number TEXT, " +
         "etat TEXT, " +
@@ -321,6 +323,25 @@ async function migrateInventoryDatabase(): Promise<void> {
   if (!columnNames.has("current_location_name")) {
     await runInventorySql(
       "ALTER TABLE inventory_articles ADD COLUMN current_location_name TEXT"
+    );
+  }
+
+  const scanColumnsResult = await runInventorySql<{ name: string }>(
+    "PRAGMA table_info(inventory_scans)"
+  );
+  const scanColumnNames = new Set(
+    scanColumnsResult.rows.map((row) => row.name)
+  );
+
+  if (!scanColumnNames.has("commentaire")) {
+    await runInventorySql(
+      "ALTER TABLE inventory_scans ADD COLUMN commentaire TEXT"
+    );
+  }
+
+  if (!scanColumnNames.has("custom_desc")) {
+    await runInventorySql(
+      "ALTER TABLE inventory_scans ADD COLUMN custom_desc TEXT"
     );
   }
 }

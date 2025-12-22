@@ -749,6 +749,8 @@ export type InventoryScanSyncInput = {
   capture_le?: string | null;
   /** Scan origin (camera/manual). */
   source_scan?: string | null;
+  /** Optional capture payload for images or metadata. */
+  donnees_capture?: string | null;
   /** Optional observation for the scan. */
   observation?: string | null;
   /** Optional serial number captured during scanning. */
@@ -759,6 +761,8 @@ export type InventoryScanSyncInput = {
   article?: string | null;
   /** Optional operator comment. */
   commentaire?: string | null;
+  /** Optional short description for temporary articles. */
+  custom_desc?: string | null;
 };
 
 /** Result entry returned for a synced scan. */

@@ -32,6 +32,8 @@ export type InventoryScanRecord = {
   articleDescription: string | null;
   /** Optional observation attached to the scan. */
   observation: string | null;
+  /** Optional short description for temporary articles. */
+  customDesc: string | null;
   /** Optional serial number captured during scan. */
   serialNumber: string | null;
   /** Optional material state for the scan. */
@@ -82,6 +84,14 @@ export type InventoryScanCreateInput = {
   articleId?: string | null;
   /** Optional article description snapshot. */
   articleDescription?: string | null;
+  /** Optional operator comment. */
+  customDesc?: string | null;
+  /** Optional observation for the scan. */
+  observation?: string | null;
+  /** Optional serial number captured during scan. */
+  serialNumber?: string | null;
+  /** Optional material state for the scan. */
+  etat?: EnregistrementInventaireEtat | null;
   /** Capture timestamp (ISO). */
   capturedAt?: string | null;
   /** Scan origin. */
@@ -104,6 +114,8 @@ export type InventoryScanUpdateInput = {
   observation?: string | null;
   /** Optional serial number update. */
   serialNumber?: string | null;
+  /** Optional operator comment update. */
+  customDesc?: string | null;
 };
 
 /** Input payload used to mark scans as synced. */
@@ -136,6 +148,10 @@ type InventoryScanRow = {
   article_desc: string | null;
   /** Observation text. */
   observation: string | null;
+  /** Operator comment text (legacy column). */
+  commentaire: string | null;
+  /** Short description for temporary articles. */
+  custom_desc: string | null;
   /** Serial number text. */
   serial_number: string | null;
   /** Etat value. */
@@ -180,6 +196,7 @@ function mapInventoryScanRow(row: InventoryScanRow): InventoryScanRecord {
     articleId: row.article_id ?? null,
     articleDescription: row.article_desc ?? null,
     observation: row.observation ?? null,
+    customDesc: row.custom_desc ?? row.commentaire ?? null,
     serialNumber: row.serial_number ?? null,
     etat: row.etat ?? null,
     capturedAt: row.capture_le,
@@ -237,7 +254,7 @@ export async function loadInventoryScans(
   const limitClause = filter.limit ? "LIMIT ?" : "";
   const sql =
     "SELECT id, remote_id, campagne_id, groupe_id, lieu_id, lieu_name, code_article, " +
-    "article_id, article_desc, observation, serial_number, etat, capture_le, source_scan, " +
+    "article_id, article_desc, observation, commentaire, custom_desc, serial_number, etat, capture_le, source_scan, " +
     "image_uri, status, status_label, is_synced, updated_at " +
     `FROM inventory_scans ${whereClause} ` +
     "ORDER BY capture_le DESC " +
@@ -270,9 +287,10 @@ export async function createInventoryScan(
     codeArticle: input.codeArticle,
     articleId: input.articleId ?? null,
     articleDescription: input.articleDescription ?? null,
-    observation: null,
-    serialNumber: null,
-    etat: null,
+    observation: input.observation ?? null,
+    customDesc: input.customDesc ?? null,
+    serialNumber: input.serialNumber ?? null,
+    etat: input.etat ?? null,
     capturedAt,
     sourceScan: input.sourceScan ?? null,
     imageUri: input.imageUri ?? null,
@@ -285,8 +303,8 @@ export async function createInventoryScan(
   await runInventorySql(
     "INSERT INTO inventory_scans " +
       "(id, remote_id, code_article, article_id, article_desc, campagne_id, groupe_id, lieu_id, lieu_name, " +
-      "observation, serial_number, etat, capture_le, source_scan, image_uri, status, status_label, is_synced, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "commentaire, custom_desc, observation, serial_number, etat, capture_le, source_scan, image_uri, status, status_label, is_synced, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       record.id,
       record.remoteId,
@@ -297,6 +315,8 @@ export async function createInventoryScan(
       record.groupId,
       record.locationId,
       record.locationName,
+      record.customDesc,
+      record.customDesc,
       record.observation,
       record.serialNumber,
       record.etat,
@@ -323,10 +343,12 @@ export async function updateInventoryScanDetails(
   const now = new Date().toISOString();
 
   await runInventorySql(
-    "UPDATE inventory_scans SET etat = ?, observation = ?, serial_number = ?, is_synced = 0, updated_at = ? WHERE id = ?",
+    "UPDATE inventory_scans SET etat = ?, observation = ?, commentaire = ?, custom_desc = ?, serial_number = ?, is_synced = 0, updated_at = ? WHERE id = ?",
     [
       input.etat ?? null,
       input.observation ?? null,
+      input.customDesc ?? null,
+      input.customDesc ?? null,
       input.serialNumber ?? null,
       now,
       input.id,

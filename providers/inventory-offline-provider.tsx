@@ -7,6 +7,7 @@ import React, {
   useState,
 } from "react";
 import { Platform, ToastAndroid } from "react-native";
+import * as FileSystem from "expo-file-system";
 import { ApolloError, useApolloClient } from "@apollo/client";
 
 import { useAuth } from "@/hooks/use-auth";
@@ -58,6 +59,19 @@ const OFFLINE_SYNC_LIMITS = {
 /** Max number of scan records to sync per request. */
 const SCAN_SYNC_BATCH_SIZE = 100;
 
+/** Base64 metadata payload used for scan image sync. */
+type ScanCapturePayload = {
+  /** Image payload with base64 and mime metadata. */
+  image: {
+    /** Base64 encoded image data. */
+    data_base64: string;
+    /** Image mime type derived from the file extension. */
+    mime_type: string;
+    /** Optional filename derived from the local URI. */
+    filename: string | null;
+  };
+};
+
 /** Default empty cache payload for the inventory offline provider. */
 const EMPTY_CACHE: InventoryOfflineCache = {
   campaigns: [],
@@ -108,9 +122,70 @@ function chunkItems<T>(items: T[], size: number): T[][] {
 }
 
 /**
+ * Infer the mime type from a local image URI.
+ */
+function guessImageMimeType(uri: string): string {
+  const lowered = uri.toLowerCase();
+  if (lowered.endsWith(".png")) {
+    return "image/png";
+  }
+  if (lowered.endsWith(".webp")) {
+    return "image/webp";
+  }
+  if (lowered.endsWith(".heic") || lowered.endsWith(".heif")) {
+    return "image/heic";
+  }
+  return "image/jpeg";
+}
+
+/**
+ * Extract a filename from a file URI if possible.
+ */
+function extractFileName(uri: string): string | null {
+  const trimmed = uri.split("?")[0] ?? "";
+  const parts = trimmed.split("/");
+  return parts.length > 0 ? parts[parts.length - 1] ?? null : null;
+}
+
+/**
+ * Build the capture payload for a scan image when present.
+ */
+async function buildScanCapturePayload(
+  scan: InventoryScanRecord
+): Promise<string | undefined> {
+  if (!scan.imageUri) {
+    return undefined;
+  }
+
+  try {
+    const base64 = await FileSystem.readAsStringAsync(scan.imageUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    if (!base64) {
+      return undefined;
+    }
+
+    const payload: ScanCapturePayload = {
+      image: {
+        data_base64: base64,
+        mime_type: guessImageMimeType(scan.imageUri),
+        filename: extractFileName(scan.imageUri),
+      },
+    };
+
+    return JSON.stringify(payload);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Map a scan record into the GraphQL sync payload.
  */
-function buildScanSyncInput(scan: InventoryScanRecord): InventoryScanSyncInput {
+async function buildScanSyncInput(
+  scan: InventoryScanRecord
+): Promise<InventoryScanSyncInput> {
   return {
     local_id: scan.id,
     campagne: scan.campaignId,
@@ -119,6 +194,8 @@ function buildScanSyncInput(scan: InventoryScanRecord): InventoryScanSyncInput {
     code_article: scan.codeArticle,
     capture_le: scan.capturedAt,
     source_scan: scan.sourceScan ?? undefined,
+    donnees_capture: (await buildScanCapturePayload(scan)) ?? undefined,
+    custom_desc: scan.customDesc ?? undefined,
     observation: scan.observation ?? undefined,
     serial_number: scan.serialNumber ?? undefined,
     etat: scan.etat ?? undefined,
@@ -344,7 +421,7 @@ export function InventoryOfflineProvider({
       let failedCount = 0;
 
       for (const batch of chunkItems(pendingScans, SCAN_SYNC_BATCH_SIZE)) {
-        const input = batch.map(buildScanSyncInput);
+        const input = await Promise.all(batch.map(buildScanSyncInput));
         const response = await client.mutate<
           SyncInventoryScansData,
           SyncInventoryScansVariables
