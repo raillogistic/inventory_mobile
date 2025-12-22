@@ -307,7 +307,13 @@ export function LocationLevelScreen({
         ];
         router.push({
           pathname: "/(drawer)/lieux/[parentId]",
-          params: { parentId: location.id, trail: JSON.stringify(newTrail) },
+          params: {
+            parentId: location.id,
+            parentName: location.locationname,
+            parentDesc: location.desc ?? "",
+            parentBarcode: location.barcode ?? "",
+            parentTrail: JSON.stringify(newTrail),
+          },
         });
       } else {
         // Sélection du lieu pour scanner

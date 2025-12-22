@@ -1,3 +1,7 @@
 eas login
 eas build:configure --platform android
 eas build -p android --profile preview
+
+
+
+npx expo run:android
