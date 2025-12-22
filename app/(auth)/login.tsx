@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import {
+  Image,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -166,6 +167,10 @@ export default function LoginScreen() {
     { light: "#94A3B8", dark: "#6B7280" },
     "icon"
   );
+  const mutedTextColor = useThemeColor(
+    { light: "#64748B", dark: "#94A3B8" },
+    "icon"
+  );
   const errorColor = useThemeColor(
     { light: "#DC2626", dark: "#F87171" },
     "text"
@@ -248,6 +253,14 @@ export default function LoginScreen() {
       behavior={Platform.select({ ios: "padding", default: undefined })}
     >
       <ThemedView style={styles.container}>
+        <View style={styles.logoContainer}>
+          <Image
+            source={require("../../assets/images/company.png")}
+            style={styles.logo}
+            resizeMode="contain"
+            accessibilityLabel="Logo Rail Logistic"
+          />
+        </View>
         <View style={styles.headerRow}>
           <View>
             <ThemedText type="title">Connexion</ThemedText>
@@ -311,6 +324,11 @@ export default function LoginScreen() {
             </ThemedText>
           </TouchableOpacity>
         </View>
+        <View style={styles.footer}>
+          <ThemedText style={[styles.footerText, { color: mutedTextColor }]}>
+            Création de la direction des systèmes d'information et numérisation
+          </ThemedText>
+        </View>
       </ThemedView>
     </KeyboardAvoidingView>
   );
@@ -324,6 +342,15 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 24,
     paddingTop: 48,
+    paddingBottom: 16,
+  },
+  logoContainer: {
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  logo: {
+    width: "80%",
+    height: 88,
   },
   headerRow: {
     flexDirection: "row",
@@ -371,5 +398,14 @@ const styles = StyleSheet.create({
   },
   errorText: {
     marginTop: 4,
+  },
+  footer: {
+    marginTop: "auto",
+    alignItems: "center",
+    paddingTop: 12,
+  },
+  footerText: {
+    fontSize: 12,
+    textAlign: "center",
   },
 });

@@ -10,6 +10,7 @@ import {
   Animated,
   BackHandler,
   FlatList,
+  Image,
   Modal,
   Pressable,
   StyleSheet,
@@ -203,6 +204,15 @@ function formatTimestamp(value: string): string {
 }
 
 /**
+ * Build a unique code for manual entries without barcodes.
+ */
+function buildManualCode(): string {
+  const timePart = Date.now().toString(36).toUpperCase();
+  const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `MANUEL-${timePart}-${randomPart}`;
+}
+
+/**
  * Build a lookup table for offline articles keyed by normalized code.
  */
 function buildOfflineArticleLookup(
@@ -293,6 +303,15 @@ export default function ScanScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isManualCaptureActive, setIsManualCaptureActive] = useState(false);
+  const [isManualFormVisible, setIsManualFormVisible] = useState(false);
+  const [manualImageUri, setManualImageUri] = useState<string | null>(null);
+  const [manualObservation, setManualObservation] = useState<string>("");
+  const [manualSerialNumber, setManualSerialNumber] = useState<string>("");
+  const [manualEtat, setManualEtat] =
+    useState<EnregistrementInventaireEtat | null>(null);
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [isManualSaving, setIsManualSaving] = useState(false);
   const [isScanLocked, setIsScanLocked] = useState(false);
   const [scanFrameLayout, setScanFrameLayout] =
     useState<ScanFrameLayout | null>(null);
@@ -307,6 +326,7 @@ export default function ScanScreen() {
     useState<ScanButtonLayout | null>(null);
   const codeInputRef = useRef<TextInput>(null);
   const cameraRef = useRef<CameraViewHandle | null>(null);
+  const manualCameraRef = useRef<CameraViewHandle | null>(null);
   const scanBorderAnim = useRef(new Animated.Value(0)).current;
   const scanLockRef = useRef(false);
 
@@ -388,6 +408,10 @@ export default function ScanScreen() {
     { light: "#FBBF24", dark: "#F59E0B" },
     "tint"
   );
+  const manualActionColor = useThemeColor(
+    { light: "#F97316", dark: "#FB923C" },
+    "tint"
+  );
   const mutedColor = useThemeColor(
     { light: "#64748B", dark: "#94A3B8" },
     "icon"
@@ -440,6 +464,8 @@ export default function ScanScreen() {
     : canAskCameraPermission
     ? "Autorisez la camera pour scanner."
     : "Autorisation refusee. Activez-la dans les reglages.";
+  const manualStatusMessage = "Ajoutez un article manuellement.";
+  const manualGlowColor = "rgba(249,115,22,0.45)";
   const locationArticlesLoading =
     !isHydrated || (isSyncing && cache.articles.length === 0);
   const locationArticlesErrorMessage = syncError;
@@ -734,6 +760,7 @@ export default function ScanScreen() {
   useEffect(() => {
     if (!hasCameraPermission) {
       setIsCameraActive(false);
+      setIsManualCaptureActive(false);
     }
   }, [hasCameraPermission]);
 
@@ -775,6 +802,14 @@ export default function ScanScreen() {
     setScansErrorMessage(null);
     setEtatErrorMessage(null);
     setCustomDescriptionValue("");
+    setIsManualCaptureActive(false);
+    setIsManualFormVisible(false);
+    setManualImageUri(null);
+    setManualObservation("");
+    setManualSerialNumber("");
+    setManualEtat(null);
+    setManualError(null);
+    setIsManualSaving(false);
     scanLockRef.current = false;
     setIsScanLocked(false);
   }, [campaignId, groupId, locationId]);
@@ -806,6 +841,15 @@ export default function ScanScreen() {
     }
     codeInputRef.current?.focus();
   }, [hasCameraPermission]);
+
+  /** Reset the manual entry draft state. */
+  const resetManualDraft = useCallback(() => {
+    setManualImageUri(null);
+    setManualObservation("");
+    setManualSerialNumber("");
+    setManualEtat(null);
+    setManualError(null);
+  }, []);
 
   /** Capture a still image of the scanned barcode. */
   const captureScanImage = useCallback(async (): Promise<string | null> => {
@@ -848,6 +892,12 @@ export default function ScanScreen() {
     setEtatErrorMessage(null);
   }, []);
 
+  /** Update the manual observation value. */
+  const handleManualObservationChange = useCallback((value: string) => {
+    setManualObservation(value);
+    setManualError(null);
+  }, []);
+
   /** Update the custom description value. */
   const handleCustomDescriptionChange = useCallback((value: string) => {
     setCustomDescriptionValue(value);
@@ -861,6 +911,21 @@ export default function ScanScreen() {
     setEtatMessage(null);
     setEtatErrorMessage(null);
   }, []);
+
+  /** Update the manual serial number value. */
+  const handleManualSerialNumberChange = useCallback((value: string) => {
+    setManualSerialNumber(value);
+    setManualError(null);
+  }, []);
+
+  /** Select the manual etat value. */
+  const handleManualEtatSelect = useCallback(
+    (value: EnregistrementInventaireEtat) => {
+      setManualEtat(value);
+      setManualError(null);
+    },
+    []
+  );
 
   /** Sync observation and serial number with the current scan detail. */
   useEffect(() => {
@@ -888,6 +953,78 @@ export default function ScanScreen() {
       setIsCameraActive(true);
     }
   }, [requestCameraPermission]);
+
+  /** Open the manual capture flow. */
+  const handleOpenManualCapture = useCallback(async () => {
+    if (isManualSaving) {
+      return;
+    }
+
+    if (!hasCameraPermission && canAskCameraPermission) {
+      const response = await requestCameraPermission();
+      if (!response.granted) {
+        return;
+      }
+    }
+
+    resetManualDraft();
+    setIsCameraActive(false);
+    setIsManualFormVisible(false);
+    setIsManualCaptureActive(true);
+  }, [
+    canAskCameraPermission,
+    hasCameraPermission,
+    isManualSaving,
+    requestCameraPermission,
+    resetManualDraft,
+  ]);
+
+  /** Capture a photo for the manual entry. */
+  const handleManualCapture = useCallback(async () => {
+    try {
+      const camera = manualCameraRef.current;
+      if (!camera?.takePictureAsync) {
+        setManualError("Camera indisponible.");
+        return;
+      }
+
+      const snapshot = await camera.takePictureAsync({
+        quality: 0.7,
+        skipProcessing: true,
+      });
+      if (snapshot && typeof snapshot === "object" && "uri" in snapshot) {
+        setManualImageUri(snapshot.uri ?? null);
+        setManualError(null);
+        return;
+      }
+      setManualError("Impossible de capturer l'image.");
+    } catch {
+      setManualError("Impossible de capturer l'image.");
+    }
+  }, []);
+
+  /** Continue from the manual capture to the form. */
+  const handleManualContinue = useCallback(() => {
+    if (!manualImageUri) {
+      setManualError("Veuillez prendre une photo avant de continuer.");
+      return;
+    }
+    setManualError(null);
+    setIsManualCaptureActive(false);
+    setIsManualFormVisible(true);
+  }, [manualImageUri]);
+
+  /** Close the manual capture modal and reset the draft. */
+  const handleManualCaptureClose = useCallback(() => {
+    setIsManualCaptureActive(false);
+    resetManualDraft();
+  }, [resetManualDraft]);
+
+  /** Close the manual form without saving. */
+  const handleManualCancel = useCallback(() => {
+    setIsManualFormVisible(false);
+    resetManualDraft();
+  }, [resetManualDraft]);
 
   /** Toggle the camera preview when permission is granted. */
   const handleToggleCamera = useCallback(() => {
@@ -919,6 +1056,100 @@ export default function ScanScreen() {
       setIsRefreshing(false);
     }
   }, [loadScans]);
+
+  /** Persist a manual entry locally for later sync. */
+  const handleManualSubmit = useCallback(async () => {
+    if (!campaignId || !groupId || !locationId) {
+      setManualError("Selection incomplete. Retournez aux selections.");
+      return;
+    }
+
+    const trimmedObservation = manualObservation.trim();
+    const trimmedSerial = manualSerialNumber.trim();
+
+    if (!manualImageUri) {
+      setManualError("Une photo est requise.");
+      return;
+    }
+    if (!manualEtat) {
+      setManualError("Choisissez un etat.");
+      return;
+    }
+    if (!trimmedObservation) {
+      setManualError("Observation requise.");
+      return;
+    }
+    if (!trimmedSerial) {
+      setManualError("Numero de serie requis.");
+      return;
+    }
+
+    setIsManualSaving(true);
+    setManualError(null);
+    try {
+      const record = await createInventoryScan({
+        campaignId,
+        groupId,
+        locationId,
+        locationName: session.location?.locationname ?? "Lieu inconnu",
+        codeArticle: buildManualCode(),
+        articleId: null,
+        articleDescription: null,
+        observation: trimmedObservation,
+        serialNumber: trimmedSerial,
+        etat: manualEtat,
+        capturedAt: new Date().toISOString(),
+        sourceScan: "manual",
+        imageUri: manualImageUri,
+        status: "missing",
+        statusLabel: "Article manuel",
+      });
+
+      setScanRecords((current) => {
+        const next = [record, ...current];
+        return next.slice(0, SCAN_STATUS_LIMIT);
+      });
+
+      const historyItem: ScanHistoryItem = {
+        id: `${record.id}-${record.capturedAt}`,
+        code: record.codeArticle,
+        description: record.articleDescription,
+        imageUri: record.imageUri,
+        status: record.status,
+        statusLabel: record.statusLabel,
+        capturedAt: record.capturedAt,
+        locationId: session.location?.id ?? null,
+        locationName: session.location?.locationname ?? "Lieu inconnu",
+        etat: record.etat ?? null,
+        observation: record.observation ?? null,
+        serialNumber: record.serialNumber ?? null,
+      };
+      await addScanHistoryItem(historyItem);
+      setIsManualFormVisible(false);
+      resetManualDraft();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "L'enregistrement manuel a echoue.";
+      setManualError(message);
+    } finally {
+      setIsManualSaving(false);
+    }
+  }, [
+    campaignId,
+    createInventoryScan,
+    addScanHistoryItem,
+    groupId,
+    locationId,
+    manualEtat,
+    manualImageUri,
+    manualObservation,
+    manualSerialNumber,
+    resetManualDraft,
+    session.location?.id,
+    session.location?.locationname,
+  ]);
 
   /** Create the scan record locally in SQLite. */
   const submitScan = useCallback(
@@ -1136,8 +1367,8 @@ export default function ScanScreen() {
     ]
   );
 
-  /** Create the scan record from the manual input. */
-  const handleManualSubmit = useCallback(async () => {
+  /** Create the scan record from the typed code input. */
+  const handleCodeSubmit = useCallback(async () => {
     await submitScan(codeValue, "manual");
   }, [codeValue, submitScan]);
 
@@ -1582,7 +1813,7 @@ export default function ScanScreen() {
                     styles.scanButton,
                     { backgroundColor: highlightColor },
                   ]}
-                  onPress={handleManualSubmit}
+                  onPress={handleCodeSubmit}
                   disabled={isSubmittingScan || isScanModalVisible}
                   accessibilityRole="button"
                   accessibilityLabel="Enregistrer le code article"
@@ -1600,6 +1831,45 @@ export default function ScanScreen() {
                     </ThemedText>
                   )}
                 </TouchableOpacity>
+              </View>
+              <View style={styles.manualContainer}>
+                <View
+                  style={[
+                    styles.scanModeButton,
+                    {
+                      borderColor: manualActionColor,
+                      shadowColor: manualGlowColor,
+                    },
+                  ]}
+                >
+                  <TouchableOpacity
+                    style={[
+                      styles.scanModeButtonInner,
+                      { backgroundColor: "transparent" },
+                    ]}
+                    onPress={handleOpenManualCapture}
+                    disabled={!hasCameraPermission && !canAskCameraPermission}
+                  >
+                    <View style={styles.scanModeButtonContent}>
+                      <ThemedText
+                        style={[
+                          styles.scanModeButtonTitle,
+                          { color: manualActionColor },
+                        ]}
+                      >
+                        Nouvel article manuel
+                      </ThemedText>
+                      <ThemedText
+                        style={[
+                          styles.scanModeButtonSubtitle,
+                          { color: manualActionColor },
+                        ]}
+                      >
+                        {manualStatusMessage}
+                      </ThemedText>
+                    </View>
+                  </TouchableOpacity>
+                </View>
               </View>
               <Modal
                 transparent
@@ -1660,6 +1930,87 @@ export default function ScanScreen() {
                       </ThemedText>
                     </View>
                   ) : null}
+                </View>
+              </Modal>
+              <Modal
+                transparent
+                visible={isManualCaptureActive}
+                animationType="fade"
+                onRequestClose={handleManualCaptureClose}
+              >
+                <View style={styles.cameraModalOverlay}>
+                  <CameraView style={styles.cameraPreview} ref={manualCameraRef} />
+                  <View style={styles.cameraHud}>
+                    <ThemedText style={styles.cameraHudTitle}>
+                      Photo article
+                    </ThemedText>
+                    <ThemedText
+                      style={[styles.cameraHint, { color: mutedColor }]}
+                    >
+                      Cadrez l'article puis prenez la photo.
+                    </ThemedText>
+                    {manualError ? (
+                      <ThemedText
+                        style={[styles.manualErrorText, { color: "#FCA5A5" }]}
+                      >
+                        {manualError}
+                      </ThemedText>
+                    ) : null}
+                    <View style={styles.manualCaptureActions}>
+                      <TouchableOpacity
+                        style={[
+                          styles.manualCaptureButton,
+                          { backgroundColor: manualActionColor },
+                        ]}
+                        onPress={handleManualCapture}
+                      >
+                        <ThemedText
+                          style={[
+                            styles.cameraCloseButtonText,
+                            { color: "#FFFFFF" },
+                          ]}
+                        >
+                          Prendre photo
+                        </ThemedText>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.manualContinueButton,
+                          {
+                            backgroundColor: highlightColor,
+                            opacity: manualImageUri ? 1 : 0.6,
+                          },
+                        ]}
+                        onPress={handleManualContinue}
+                        disabled={!manualImageUri}
+                      >
+                        <ThemedText
+                          style={[
+                            styles.cameraCloseButtonText,
+                            { color: "#FFFFFF" },
+                          ]}
+                        >
+                          Continuer
+                        </ThemedText>
+                      </TouchableOpacity>
+                    </View>
+                    <TouchableOpacity
+                      style={[
+                        styles.cameraCloseButton,
+                        { backgroundColor: highlightColor },
+                      ]}
+                      onPress={handleManualCaptureClose}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.cameraCloseButtonText,
+                          { color: buttonTextColor },
+                        ]}
+                      >
+                        Fermer
+                      </ThemedText>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </Modal>
             </View>
@@ -2110,6 +2461,168 @@ export default function ScanScreen() {
           ) : null}
         </Pressable>
       </Modal>
+      <Modal
+        transparent
+        visible={isManualFormVisible}
+        animationType="fade"
+        onRequestClose={handleManualCancel}
+      >
+        <Pressable
+          style={[styles.modalOverlay, { backgroundColor: modalOverlayColor }]}
+          onPress={handleManualCancel}
+        >
+          <Pressable
+            style={[
+              styles.modalCard,
+              { backgroundColor: modalCardColor, borderColor: manualActionColor },
+            ]}
+            onPress={() => {}}
+          >
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={handleManualCancel}
+              accessibilityRole="button"
+              accessibilityLabel="Fermer le formulaire manuel"
+            >
+              <IconSymbol name="xmark" size={16} color={mutedColor} />
+            </TouchableOpacity>
+            <View style={styles.modalContent}>
+              <ThemedText type="title" style={styles.modalCodeText}>
+                Enregistrement manuel
+              </ThemedText>
+              {manualImageUri ? (
+                <Image
+                  source={{ uri: manualImageUri }}
+                  style={styles.manualPreview}
+                  resizeMode="cover"
+                />
+              ) : null}
+              <View style={styles.modalField}>
+                <ThemedText style={[styles.modalFieldLabel, { color: mutedColor }]}>
+                  Observation
+                </ThemedText>
+                <TextInput
+                  style={[
+                    styles.modalInput,
+                    {
+                      borderColor,
+                      color: inputTextColor,
+                      backgroundColor: surfaceColor,
+                    },
+                  ]}
+                  placeholder="Ajouter une observation"
+                  placeholderTextColor={placeholderColor}
+                  value={manualObservation}
+                  onChangeText={handleManualObservationChange}
+                  multiline
+                />
+              </View>
+              <View style={styles.modalField}>
+                <ThemedText style={[styles.modalFieldLabel, { color: mutedColor }]}>
+                  Numero de serie
+                </ThemedText>
+                <TextInput
+                  style={[
+                    styles.modalInput,
+                    {
+                      borderColor,
+                      color: inputTextColor,
+                      backgroundColor: surfaceColor,
+                    },
+                  ]}
+                  placeholder="Saisir un numero de serie"
+                  placeholderTextColor={placeholderColor}
+                  value={manualSerialNumber}
+                  onChangeText={handleManualSerialNumberChange}
+                  autoCapitalize="characters"
+                />
+              </View>
+              <View style={styles.etatSection}>
+                <ThemedText type="subtitle">Etat du materiel</ThemedText>
+                <View style={styles.etatOptions}>
+                  {ETAT_OPTIONS.map((option) => {
+                    const isSelected = manualEtat === option.value;
+                    return (
+                      <TouchableOpacity
+                        key={option.value}
+                        style={[
+                          styles.etatOption,
+                          {
+                            borderColor,
+                            backgroundColor: isSelected
+                              ? "rgba(34,197,94,0.18)"
+                              : "transparent",
+                          },
+                        ]}
+                        onPress={() => handleManualEtatSelect(option.value)}
+                      >
+                        <View style={styles.etatOptionContent}>
+                          <ThemedText
+                            style={[
+                              styles.etatOptionText,
+                              {
+                                color: isSelected ? textColor : mutedColor,
+                              },
+                            ]}
+                          >
+                            {option.label}
+                          </ThemedText>
+                          <IconSymbol
+                            name="checkmark.circle.fill"
+                            size={22}
+                            color={isSelected ? "#22C55E" : "#94A3B8"}
+                          />
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+              {manualError ? (
+                <ThemedText style={styles.etatErrorText}>
+                  {manualError}
+                </ThemedText>
+              ) : null}
+            </View>
+
+            <View style={styles.modalButtonRow}>
+              <TouchableOpacity
+                style={[
+                  styles.modalButtonSecondary,
+                  { borderColor: highlightColor },
+                ]}
+                onPress={handleManualCancel}
+                disabled={isManualSaving}
+              >
+                <ThemedText
+                  style={[styles.modalButtonSecondaryText, { color: textColor }]}
+                >
+                  Annuler
+                </ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalButton,
+                  {
+                    backgroundColor: highlightColor,
+                    opacity: isManualSaving ? 0.6 : 1,
+                  },
+                ]}
+                onPress={handleManualSubmit}
+                disabled={isManualSaving}
+              >
+                {isManualSaving ? (
+                  <ActivityIndicator color={buttonTextColor} size="small" />
+                ) : (
+                  <ThemedText style={styles.modalButtonText}>
+                    Enregistrer
+                  </ThemedText>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ThemedView>
   );
 }
@@ -2237,6 +2750,9 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     letterSpacing: 0.4,
   },
+  manualContainer: {
+    marginTop: 12,
+  },
   cameraPreview: {
     height: "100%",
     width: "100%",
@@ -2253,6 +2769,27 @@ const styles = StyleSheet.create({
   cameraCloseButtonText: {
     fontSize: 12,
     fontWeight: "600",
+  },
+  manualCaptureActions: {
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "center",
+    marginTop: 12,
+  },
+  manualCaptureButton: {
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  manualContinueButton: {
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  manualErrorText: {
+    fontSize: 13,
+    textAlign: "center",
+    marginTop: 8,
   },
   cameraHint: {
     fontSize: 13,
@@ -2486,6 +3023,11 @@ const styles = StyleSheet.create({
   modalDescription: {
     fontSize: 18,
     textAlign: "center",
+  },
+  manualPreview: {
+    width: "100%",
+    height: 180,
+    borderRadius: 12,
   },
   modalMeta: {
     fontSize: 14,
