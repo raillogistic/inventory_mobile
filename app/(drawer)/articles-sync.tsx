@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Écran de synchronisation des articles avec design premium.
+ * Affiche les scans en attente de synchronisation et les scans synchronisés.
+ */
+
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -5,52 +10,50 @@ import {
   FlatList,
   Platform,
   StyleSheet,
+  Text,
   ToastAndroid,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { Image } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
+import { BlurView } from "expo-blur";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { ThemedText } from "@/components/themed-text";
-import { ThemedView } from "@/components/themed-view";
+import {
+  PremiumScreenWrapper,
+  PREMIUM_COLORS,
+} from "@/components/ui/premium-theme";
 import { useInventoryOffline } from "@/hooks/use-inventory-offline";
-import { useThemeColor } from "@/hooks/use-theme-color";
 import {
   loadInventoryScans,
   type InventoryScanRecord,
 } from "@/lib/offline/inventory-scan-storage";
 
-/** Identifier for the active sync tab. */
+/** Identifiant de l'onglet actif */
 type SyncTabId = "pending" | "synced";
 
-/** Metadata describing a sync tab. */
+/** Métadonnées décrivant un onglet */
 type SyncTabOption = {
-  /** Tab identifier. */
+  /** Identifiant de l'onglet */
   id: SyncTabId;
-  /** Tab label displayed in the UI. */
+  /** Label affiché dans l'UI */
   label: string;
+  /** Icône SF Symbol */
+  icon: string;
 };
 
-/** Color palette for scan status badges. */
-type StatusPalette = {
-  /** Border/background color for scanned items. */
-  scanned: string;
-  /** Border/background color for missing items. */
-  missing: string;
-  /** Border/background color for other location items. */
-  other: string;
-};
-
-/** Tabs available on the sync screen. */
+/** Onglets disponibles */
 const SYNC_TABS: SyncTabOption[] = [
-  { id: "pending", label: "A synchroniser" },
-  { id: "synced", label: "Synchronises" },
+  { id: "pending", label: "En attente", icon: "clock.arrow.circlepath" },
+  { id: "synced", label: "Synchronisés", icon: "checkmark.circle.fill" },
 ];
 
 /**
- * Format a timestamp for display in French locale.
+ * Formate un timestamp pour l'affichage en français.
+ * @param value - Valeur timestamp ISO
+ * @returns Date formatée
  */
 function formatTimestamp(value: string): string {
   const date = new Date(value);
@@ -68,7 +71,9 @@ function formatTimestamp(value: string): string {
 }
 
 /**
- * Resolve the best description for a scan item.
+ * Récupère la meilleure description pour un scan.
+ * @param scan - Enregistrement de scan
+ * @returns Description
  */
 function getScanDescription(scan: InventoryScanRecord): string {
   return (
@@ -80,7 +85,23 @@ function getScanDescription(scan: InventoryScanRecord): string {
 }
 
 /**
- * Screen that lists scans awaiting sync and already synced scans.
+ * Retourne la couleur selon le statut du scan.
+ * @param status - Statut du scan
+ * @returns Couleur d'accent
+ */
+function getStatusColor(status: string | undefined): string {
+  switch (status) {
+    case "missing":
+      return PREMIUM_COLORS.error;
+    case "other":
+      return PREMIUM_COLORS.warning;
+    default:
+      return PREMIUM_COLORS.success;
+  }
+}
+
+/**
+ * Écran de synchronisation des articles avec design premium.
  */
 export default function ArticlesSyncScreen() {
   const { isScanSyncing, scanSyncError, syncScans } = useInventoryOffline();
@@ -90,48 +111,7 @@ export default function ArticlesSyncScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const borderColor = useThemeColor(
-    { light: "#E2E8F0", dark: "#2B2E35" },
-    "icon"
-  );
-  const surfaceColor = useThemeColor(
-    { light: "#FFFFFF", dark: "#1F232B" },
-    "background"
-  );
-  const tintColor = useThemeColor(
-    { light: "#2563EB", dark: "#60A5FA" },
-    "tint"
-  );
-  const mutedColor = useThemeColor(
-    { light: "#64748B", dark: "#94A3B8" },
-    "icon"
-  );
-  const scannedColor = useThemeColor(
-    { light: "#16A34A", dark: "#22C55E" },
-    "tint"
-  );
-  const missingColor = useThemeColor(
-    { light: "#DC2626", dark: "#B91C1C" },
-    "tint"
-  );
-  const otherColor = useThemeColor(
-    { light: "#FBBF24", dark: "#F59E0B" },
-    "tint"
-  );
-  const buttonTextColor = useThemeColor(
-    { light: "#FFFFFF", dark: "#0F172A" },
-    "text"
-  );
-  const statusPalette: StatusPalette = useMemo(
-    () => ({
-      scanned: scannedColor,
-      missing: missingColor,
-      other: otherColor,
-    }),
-    [missingColor, otherColor, scannedColor]
-  );
-
-  /** Display a toast or alert for sync feedback. */
+  /** Affiche un toast ou une alerte pour le feedback. */
   const showSyncMessage = useCallback((message: string) => {
     if (Platform.OS === "android") {
       ToastAndroid.show(message, ToastAndroid.SHORT);
@@ -141,7 +121,7 @@ export default function ArticlesSyncScreen() {
     Alert.alert("Synchronisation", message);
   }, []);
 
-  /** Load scans grouped by sync state. */
+  /** Charge les scans groupés par état de sync. */
   const loadScans = useCallback(async () => {
     setIsLoading(true);
     setLoadError(null);
@@ -169,12 +149,12 @@ export default function ArticlesSyncScreen() {
     }, [loadScans])
   );
 
-  /** Switch between pending and synced tabs. */
+  /** Change d'onglet. */
   const handleTabChange = useCallback((tab: SyncTabId) => {
     setActiveTab(tab);
   }, []);
 
-  /** Trigger a sync for pending scans. */
+  /** Lance la synchronisation. */
   const handleSyncNow = useCallback(async () => {
     if (isScanSyncing) {
       return;
@@ -185,349 +165,594 @@ export default function ArticlesSyncScreen() {
       await loadScans();
 
       if (summary.totalCount === 0) {
-        showSyncMessage("Aucun article a synchroniser.");
+        showSyncMessage("Aucun article à synchroniser.");
         return;
       }
 
       if (summary.failedCount === 0) {
-        showSyncMessage(`${summary.syncedCount} article(s) synchronises.`);
+        showSyncMessage(`${summary.syncedCount} article(s) synchronisé(s).`);
         return;
       }
 
       showSyncMessage(
-        `${summary.syncedCount}/${summary.totalCount} articles synchronises.`
+        `${summary.syncedCount}/${summary.totalCount} articles synchronisés.`
       );
     } catch (error) {
       const message =
-        error instanceof Error
-          ? error.message
-          : "La synchronisation a echoue.";
+        error instanceof Error ? error.message : "La synchronisation a échoué.";
       showSyncMessage(message);
     }
   }, [isScanSyncing, loadScans, showSyncMessage, syncScans]);
 
   const activeScans = activeTab === "pending" ? pendingScans : syncedScans;
-  const pendingCountLabel = `${pendingScans.length} article(s)`;
-  const syncedCountLabel = `${syncedScans.length} article(s)`;
 
-  /** Render a single scan row. */
-  const renderItem = useCallback(
-    ({ item }: { item: InventoryScanRecord }) => {
-      const accentColor =
-        item.status === "missing"
-          ? statusPalette.missing
-          : item.status === "other"
-          ? statusPalette.other
-          : statusPalette.scanned;
-      return (
+  /** Rend une ligne de scan. */
+  const renderItem = useCallback(({ item }: { item: InventoryScanRecord }) => {
+    const accentColor = getStatusColor(item.status);
+    return (
+      <View style={styles.scan_card}>
+        {/* Barre d'accent */}
         <View
-          style={[
-            styles.scanCard,
-            { borderColor: accentColor, backgroundColor: surfaceColor },
-          ]}
-        >
+          style={[styles.card_accent_bar, { backgroundColor: accentColor }]}
+        />
+
+        <View style={styles.card_content}>
+          {/* Thumbnail */}
           {item.imageUri ? (
             <Image source={{ uri: item.imageUri }} style={styles.thumbnail} />
           ) : (
-            <View
-              style={[
-                styles.thumbnailFallback,
-                { borderColor, backgroundColor: surfaceColor },
-              ]}
-            >
-              <ThemedText style={[styles.thumbnailText, { color: mutedColor }]}>
-                Sans image
-              </ThemedText>
+            <View style={styles.thumbnail_fallback}>
+              <IconSymbol
+                name="photo"
+                size={20}
+                color={PREMIUM_COLORS.text_muted}
+              />
             </View>
           )}
-          <View style={styles.scanMeta}>
-            <ThemedText type="defaultSemiBold">{item.codeArticle}</ThemedText>
-            <ThemedText style={[styles.scanDescription, { color: mutedColor }]}>
+
+          {/* Métadonnées */}
+          <View style={styles.meta_container}>
+            <Text style={styles.scan_code}>{item.codeArticle}</Text>
+            <Text style={styles.scan_description} numberOfLines={1}>
               {getScanDescription(item)}
-            </ThemedText>
-            <View style={styles.scanRow}>
-              <View style={[styles.statusBadge, { backgroundColor: accentColor }]}>
-                <ThemedText style={styles.statusText}>
+            </Text>
+
+            <View style={styles.meta_row}>
+              <View
+                style={[
+                  styles.status_badge,
+                  { backgroundColor: `${accentColor}20` },
+                ]}
+              >
+                <View
+                  style={[styles.status_dot, { backgroundColor: accentColor }]}
+                />
+                <Text style={[styles.status_text, { color: accentColor }]}>
                   {item.statusLabel}
-                </ThemedText>
+                </Text>
               </View>
-              <ThemedText style={[styles.scanTimestamp, { color: mutedColor }]}>
+              <Text style={styles.timestamp}>
                 {formatTimestamp(item.capturedAt)}
-              </ThemedText>
+              </Text>
             </View>
-            <ThemedText style={[styles.scanLocation, { color: mutedColor }]}>
-              Lieu: {item.locationName}
-            </ThemedText>
-            <ThemedText style={[styles.scanSync, { color: mutedColor }]}>
-              {item.isSynced ? "Synchronise" : "En attente de sync"}
-            </ThemedText>
+
+            <View style={styles.location_row}>
+              <IconSymbol
+                name="mappin"
+                size={12}
+                color={PREMIUM_COLORS.text_muted}
+              />
+              <Text style={styles.location_text} numberOfLines={1}>
+                {item.locationName}
+              </Text>
+            </View>
+
+            <View style={styles.sync_status_row}>
+              <IconSymbol
+                name={item.isSynced ? "checkmark.circle.fill" : "clock"}
+                size={12}
+                color={
+                  item.isSynced
+                    ? PREMIUM_COLORS.success
+                    : PREMIUM_COLORS.text_muted
+                }
+              />
+              <Text
+                style={[
+                  styles.sync_status_text,
+                  {
+                    color: item.isSynced
+                      ? PREMIUM_COLORS.success
+                      : PREMIUM_COLORS.text_muted,
+                  },
+                ]}
+              >
+                {item.isSynced ? "Synchronisé" : "En attente"}
+              </Text>
+            </View>
           </View>
         </View>
-      );
-    },
-    [borderColor, mutedColor, statusPalette, surfaceColor]
-  );
+      </View>
+    );
+  }, []);
 
-  /** Render the list header containing tabs and actions. */
+  /** Rend l'en-tête de la liste. */
   const renderHeader = useCallback(() => {
     return (
-      <View style={styles.header}>
-        <View style={styles.headerRow}>
-          <View>
-            <ThemedText type="title">Articles a synchroniser</ThemedText>
-            <ThemedText style={[styles.headerSubtitle, { color: mutedColor }]}>
-              {activeTab === "pending" ? pendingCountLabel : syncedCountLabel}
-            </ThemedText>
-          </View>
-          {isLoading ? (
-            <ActivityIndicator size="small" color={tintColor} />
-          ) : null}
-        </View>
-        <View
-          style={[styles.tabRow, { borderColor, backgroundColor: surfaceColor }]}
-        >
-          {SYNC_TABS.map((tab) => {
-            const isActive = tab.id === activeTab;
-            return (
-              <TouchableOpacity
-                key={tab.id}
-                style={[
-                  styles.tabButton,
-                  isActive
-                    ? { backgroundColor: tintColor }
-                    : { backgroundColor: "transparent" },
-                ]}
-                onPress={() => handleTabChange(tab.id)}
-              >
-                <ThemedText
-                  style={[
-                    styles.tabButtonText,
-                    { color: isActive ? buttonTextColor : mutedColor },
-                  ]}
-                >
-                  {tab.label}
-                </ThemedText>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-        {activeTab === "pending" ? (
-          <TouchableOpacity
-            style={[
-              styles.syncNowButton,
-              {
-                backgroundColor: tintColor,
-                opacity: isScanSyncing ? 0.6 : 1,
-              },
-            ]}
-            onPress={handleSyncNow}
-            disabled={isScanSyncing}
-          >
-            <View style={styles.syncNowContent}>
-              <IconSymbol
-                name="arrow.clockwise"
-                size={18}
-                color={buttonTextColor}
-              />
-              <ThemedText
-                type="defaultSemiBold"
-                style={[styles.syncNowText, { color: buttonTextColor }]}
-              >
-                {isScanSyncing ? "Synchronisation..." : "Synchroniser maintenant"}
-              </ThemedText>
+      <View style={styles.header_section}>
+        <BlurView intensity={20} tint="dark" style={styles.header_blur}>
+          <View style={styles.header_card}>
+            <View style={styles.header_row}>
+              <View style={styles.header_icon}>
+                <IconSymbol
+                  name="arrow.triangle.2.circlepath"
+                  size={24}
+                  color={PREMIUM_COLORS.accent_primary}
+                />
+              </View>
+              <View style={styles.header_text}>
+                <Text style={styles.header_title}>Articles à synchroniser</Text>
+                <Text style={styles.header_subtitle}>
+                  {pendingScans.length} en attente • {syncedScans.length}{" "}
+                  synchronisés
+                </Text>
+              </View>
+              {isLoading && (
+                <ActivityIndicator
+                  size="small"
+                  color={PREMIUM_COLORS.accent_primary}
+                />
+              )}
             </View>
-          </TouchableOpacity>
-        ) : null}
-        {loadError ? (
-          <View style={styles.errorCard}>
-            <ThemedText type="subtitle">Erreur de chargement</ThemedText>
-            <ThemedText style={[styles.errorText, { color: mutedColor }]}>
-              {loadError}
-            </ThemedText>
+
+            <LinearGradient
+              colors={[
+                "transparent",
+                PREMIUM_COLORS.accent_primary,
+                "transparent",
+              ]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.separator}
+            />
+
+            {/* Onglets */}
+            <View style={styles.tab_row}>
+              {SYNC_TABS.map((tab) => {
+                const isActive = tab.id === activeTab;
+                const count =
+                  tab.id === "pending"
+                    ? pendingScans.length
+                    : syncedScans.length;
+                return (
+                  <TouchableOpacity
+                    key={tab.id}
+                    style={[
+                      styles.tab_button,
+                      isActive && styles.tab_button_active,
+                    ]}
+                    onPress={() => handleTabChange(tab.id)}
+                    activeOpacity={0.7}
+                  >
+                    <IconSymbol
+                      name={tab.icon as any}
+                      size={16}
+                      color={
+                        isActive
+                          ? PREMIUM_COLORS.accent_primary
+                          : PREMIUM_COLORS.text_muted
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.tab_text,
+                        isActive && styles.tab_text_active,
+                      ]}
+                    >
+                      {tab.label}
+                    </Text>
+                    <View
+                      style={[
+                        styles.tab_badge,
+                        isActive && styles.tab_badge_active,
+                      ]}
+                    >
+                      <Text style={styles.tab_badge_text}>{count}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Bouton sync */}
+            {activeTab === "pending" && (
+              <TouchableOpacity
+                style={[
+                  styles.sync_button,
+                  isScanSyncing && styles.sync_button_disabled,
+                ]}
+                onPress={handleSyncNow}
+                disabled={isScanSyncing}
+                activeOpacity={0.7}
+              >
+                <LinearGradient
+                  colors={
+                    isScanSyncing
+                      ? [PREMIUM_COLORS.glass_bg, PREMIUM_COLORS.glass_bg]
+                      : [
+                          PREMIUM_COLORS.accent_primary,
+                          PREMIUM_COLORS.accent_secondary,
+                        ]
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.sync_button_gradient}
+                >
+                  <IconSymbol
+                    name="arrow.clockwise"
+                    size={18}
+                    color={PREMIUM_COLORS.text_primary}
+                  />
+                  <Text style={styles.sync_button_text}>
+                    {isScanSyncing
+                      ? "Synchronisation..."
+                      : "Synchroniser maintenant"}
+                  </Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
+
+            {/* Erreurs */}
+            {loadError && (
+              <View style={styles.error_container}>
+                <IconSymbol
+                  name="exclamationmark.triangle.fill"
+                  size={18}
+                  color={PREMIUM_COLORS.error}
+                />
+                <View style={styles.error_content}>
+                  <Text style={styles.error_title}>Erreur de chargement</Text>
+                  <Text style={styles.error_message}>{loadError}</Text>
+                </View>
+              </View>
+            )}
+
+            {scanSyncError && (
+              <View style={styles.error_container}>
+                <IconSymbol
+                  name="exclamationmark.triangle.fill"
+                  size={18}
+                  color={PREMIUM_COLORS.error}
+                />
+                <View style={styles.error_content}>
+                  <Text style={styles.error_title}>
+                    Erreur de synchronisation
+                  </Text>
+                  <Text style={styles.error_message}>{scanSyncError}</Text>
+                </View>
+              </View>
+            )}
           </View>
-        ) : null}
-        {scanSyncError ? (
-          <View style={styles.errorCard}>
-            <ThemedText type="subtitle">Erreur de synchronisation</ThemedText>
-            <ThemedText style={[styles.errorText, { color: mutedColor }]}>
-              {scanSyncError}
-            </ThemedText>
-          </View>
-        ) : null}
+        </BlurView>
       </View>
     );
   }, [
     activeTab,
-    buttonTextColor,
     handleSyncNow,
     handleTabChange,
     isLoading,
     isScanSyncing,
     loadError,
-    mutedColor,
-    pendingCountLabel,
+    pendingScans.length,
     scanSyncError,
-    syncedCountLabel,
-    tintColor,
-    surfaceColor,
-    borderColor,
+    syncedScans.length,
   ]);
 
+  /** Rend l'état vide. */
+  const renderEmpty = useCallback(() => {
+    return (
+      <View style={styles.empty_container}>
+        <View style={styles.empty_icon}>
+          <IconSymbol
+            name={activeTab === "pending" ? "tray" : "checkmark.seal.fill"}
+            size={40}
+            color={
+              activeTab === "pending"
+                ? PREMIUM_COLORS.text_muted
+                : PREMIUM_COLORS.success
+            }
+          />
+        </View>
+        <Text style={styles.empty_title}>
+          {activeTab === "pending"
+            ? "Aucun article à synchroniser"
+            : "Aucun article synchronisé"}
+        </Text>
+        <Text style={styles.empty_subtitle}>
+          {activeTab === "pending"
+            ? "Les scans en attente apparaissent ici."
+            : "Les articles synchronisés apparaissent ici."}
+        </Text>
+      </View>
+    );
+  }, [activeTab]);
+
+  /** Key extractor. */
+  const keyExtractor = useCallback((item: InventoryScanRecord) => item.id, []);
+
   return (
-    <ThemedView style={styles.container}>
+    <PremiumScreenWrapper>
       <FlatList
         data={activeScans}
-        keyExtractor={(item) => item.id}
+        keyExtractor={keyExtractor}
         renderItem={renderItem}
         ListHeaderComponent={renderHeader}
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <ThemedText type="subtitle">
-              {activeTab === "pending"
-                ? "Aucun article a synchroniser"
-                : "Aucun article synchronise"}
-            </ThemedText>
-            <ThemedText style={[styles.emptyText, { color: mutedColor }]}>
-              {activeTab === "pending"
-                ? "Les scans en attente apparaissent ici."
-                : "Les articles synchronises apparaissent ici."}
-            </ThemedText>
-          </View>
-        }
-        contentContainerStyle={styles.listContent}
+        ListEmptyComponent={renderEmpty}
+        contentContainerStyle={styles.list_content}
         showsVerticalScrollIndicator={false}
       />
-    </ThemedView>
+    </PremiumScreenWrapper>
   );
 }
 
+/**
+ * Styles du composant ArticlesSyncScreen.
+ */
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  listContent: {
-    padding: 20,
+  list_content: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 24,
     gap: 12,
   },
-  header: {
-    gap: 12,
-    marginBottom: 4,
+  /* En-tête */
+  header_section: {
+    marginBottom: 8,
   },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
+  header_blur: {
+    borderRadius: 20,
+    overflow: "hidden",
   },
-  headerSubtitle: {
-    fontSize: 14,
-  },
-  tabRow: {
+  header_card: {
+    backgroundColor: PREMIUM_COLORS.glass_bg,
     borderWidth: 1,
-    borderRadius: 14,
-    padding: 4,
+    borderColor: PREMIUM_COLORS.glass_border,
+    borderRadius: 20,
+    padding: 20,
+  },
+  header_row: {
     flexDirection: "row",
-    gap: 6,
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
     alignItems: "center",
+    gap: 14,
   },
-  tabButtonText: {
+  header_icon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "rgba(255, 107, 0, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  header_text: {
+    flex: 1,
+  },
+  header_title: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: PREMIUM_COLORS.text_primary,
+    letterSpacing: -0.5,
+  },
+  header_subtitle: {
+    fontSize: 13,
+    color: PREMIUM_COLORS.text_muted,
+    marginTop: 2,
+  },
+  separator: {
+    height: 1,
+    marginVertical: 16,
+  },
+  /* Onglets */
+  tab_row: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  tab_button: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: PREMIUM_COLORS.glass_bg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: PREMIUM_COLORS.glass_border,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+  },
+  tab_button_active: {
+    borderColor: PREMIUM_COLORS.accent_primary,
+    backgroundColor: "rgba(255, 107, 0, 0.08)",
+  },
+  tab_text: {
     fontSize: 13,
     fontWeight: "600",
+    color: PREMIUM_COLORS.text_muted,
   },
-  syncNowButton: {
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+  tab_text_active: {
+    color: PREMIUM_COLORS.accent_primary,
   },
-  syncNowContent: {
+  tab_badge: {
+    backgroundColor: PREMIUM_COLORS.glass_highlight,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  tab_badge_active: {
+    backgroundColor: "rgba(255, 107, 0, 0.2)",
+  },
+  tab_badge_text: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: PREMIUM_COLORS.text_secondary,
+  },
+  /* Bouton sync */
+  sync_button: {
+    borderRadius: 14,
+    overflow: "hidden",
+    marginTop: 16,
+  },
+  sync_button_disabled: {
+    opacity: 0.6,
+  },
+  sync_button_gradient: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
+    paddingVertical: 14,
   },
-  syncNowText: {
-    fontSize: 15,
+  sync_button_text: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: PREMIUM_COLORS.text_primary,
   },
-  errorCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#FCA5A5",
-    padding: 12,
-    gap: 4,
-    backgroundColor: "rgba(248, 113, 113, 0.12)",
-  },
-  errorText: {
-    fontSize: 13,
-  },
-  emptyState: {
-    alignItems: "center",
-    gap: 6,
-    paddingVertical: 24,
-  },
-  emptyText: {
-    fontSize: 13,
-    textAlign: "center",
-  },
-  scanCard: {
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 12,
+  /* Erreurs */
+  error_container: {
     flexDirection: "row",
-    gap: 12,
+    alignItems: "flex-start",
+    gap: 10,
+    backgroundColor: PREMIUM_COLORS.error_bg,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+  },
+  error_content: {
+    flex: 1,
+    gap: 2,
+  },
+  error_title: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: PREMIUM_COLORS.error,
+  },
+  error_message: {
+    fontSize: 12,
+    color: PREMIUM_COLORS.text_muted,
+  },
+  /* Scan card */
+  scan_card: {
+    backgroundColor: PREMIUM_COLORS.glass_bg,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: PREMIUM_COLORS.glass_border,
+    overflow: "hidden",
+  },
+  card_accent_bar: {
+    height: 3,
+  },
+  card_content: {
+    flexDirection: "row",
     alignItems: "center",
+    padding: 14,
+    gap: 12,
   },
   thumbnail: {
-    width: 64,
-    height: 64,
+    width: 56,
+    height: 56,
     borderRadius: 12,
   },
-  thumbnailFallback: {
-    width: 64,
-    height: 64,
+  thumbnail_fallback: {
+    width: 56,
+    height: 56,
     borderRadius: 12,
-    borderWidth: 1,
+    backgroundColor: PREMIUM_COLORS.glass_highlight,
     alignItems: "center",
     justifyContent: "center",
   },
-  thumbnailText: {
-    fontSize: 11,
-    textAlign: "center",
-  },
-  scanMeta: {
+  meta_container: {
     flex: 1,
-    gap: 4,
+    gap: 3,
   },
-  scanDescription: {
+  scan_code: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: PREMIUM_COLORS.text_primary,
+  },
+  scan_description: {
     fontSize: 13,
+    color: PREMIUM_COLORS.text_muted,
   },
-  scanRow: {
+  meta_row: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
+    gap: 10,
+    marginTop: 4,
   },
-  statusBadge: {
-    borderRadius: 999,
+  status_badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 3,
+    borderRadius: 999,
   },
-  statusText: {
-    color: "#FFFFFF",
+  status_dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  status_text: {
     fontSize: 11,
     fontWeight: "600",
   },
-  scanTimestamp: {
+  timestamp: {
     fontSize: 11,
+    color: PREMIUM_COLORS.text_muted,
   },
-  scanLocation: {
-    fontSize: 12,
+  location_row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
-  scanSync: {
+  location_text: {
     fontSize: 12,
+    color: PREMIUM_COLORS.text_muted,
+    flex: 1,
+  },
+  sync_status_row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  sync_status_text: {
+    fontSize: 11,
+    fontWeight: "500",
+  },
+  /* État vide */
+  empty_container: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 60,
+    gap: 16,
+  },
+  empty_icon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: PREMIUM_COLORS.glass_bg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  empty_title: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: PREMIUM_COLORS.text_secondary,
+  },
+  empty_subtitle: {
+    fontSize: 14,
+    color: PREMIUM_COLORS.text_muted,
+    textAlign: "center",
+    paddingHorizontal: 40,
   },
 });

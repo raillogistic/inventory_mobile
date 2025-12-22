@@ -309,6 +309,7 @@ export default function ScanScreen() {
   const [isManualCaptureActive, setIsManualCaptureActive] = useState(false);
   const [isManualFormVisible, setIsManualFormVisible] = useState(false);
   const [manualImageUri, setManualImageUri] = useState<string | null>(null);
+  const [manualCustomDesc, setManualCustomDesc] = useState<string>("");
   const [manualObservation, setManualObservation] = useState<string>("");
   const [manualSerialNumber, setManualSerialNumber] = useState<string>("");
   const [manualEtat, setManualEtat] =
@@ -852,6 +853,7 @@ export default function ScanScreen() {
   /** Reset the manual entry draft state. */
   const resetManualDraft = useCallback(() => {
     setManualImageUri(null);
+    setManualCustomDesc("");
     setManualObservation("");
     setManualSerialNumber("");
     setManualEtat(null);
@@ -902,6 +904,12 @@ export default function ScanScreen() {
   /** Update the manual observation value. */
   const handleManualObservationChange = useCallback((value: string) => {
     setManualObservation(value);
+    setManualError(null);
+  }, []);
+
+  /** Update the manual custom description value. */
+  const handleManualCustomDescChange = useCallback((value: string) => {
+    setManualCustomDesc(value);
     setManualError(null);
   }, []);
 
@@ -1071,6 +1079,7 @@ export default function ScanScreen() {
       return;
     }
 
+    const trimmedCustomDesc = manualCustomDesc.trim();
     const trimmedObservation = manualObservation.trim();
     const trimmedSerial = manualSerialNumber.trim();
 
@@ -1080,14 +1089,6 @@ export default function ScanScreen() {
     }
     if (!manualEtat) {
       setManualError("Choisissez un etat.");
-      return;
-    }
-    if (!trimmedObservation) {
-      setManualError("Observation requise.");
-      return;
-    }
-    if (!trimmedSerial) {
-      setManualError("Numero de serie requis.");
       return;
     }
 
@@ -1102,8 +1103,9 @@ export default function ScanScreen() {
         codeArticle: buildManualCode(),
         articleId: null,
         articleDescription: null,
-        observation: trimmedObservation,
-        serialNumber: trimmedSerial,
+        customDesc: trimmedCustomDesc || null,
+        observation: trimmedObservation || null,
+        serialNumber: trimmedSerial || null,
         etat: manualEtat,
         capturedAt: new Date().toISOString(),
         sourceScan: "manual",
@@ -1151,6 +1153,7 @@ export default function ScanScreen() {
     locationId,
     manualEtat,
     manualImageUri,
+    manualCustomDesc,
     manualObservation,
     manualSerialNumber,
     resetManualDraft,
@@ -2531,6 +2534,27 @@ export default function ScanScreen() {
                 <ThemedText
                   style={[styles.modalFieldLabel, { color: mutedColor }]}
                 >
+                  Libelle court
+                </ThemedText>
+                <TextInput
+                  style={[
+                    styles.modalInput,
+                    {
+                      borderColor,
+                      color: inputTextColor,
+                      backgroundColor: surfaceColor,
+                    },
+                  ]}
+                  placeholder="Ajouter un libelle court"
+                  placeholderTextColor={placeholderColor}
+                  value={manualCustomDesc}
+                  onChangeText={handleManualCustomDescChange}
+                />
+              </View>
+              <View style={styles.modalField}>
+                <ThemedText
+                  style={[styles.modalFieldLabel, { color: mutedColor }]}
+                >
                   Observation
                 </ThemedText>
                 <TextInput
@@ -2542,7 +2566,7 @@ export default function ScanScreen() {
                       backgroundColor: surfaceColor,
                     },
                   ]}
-                  placeholder="Ajouter une observation"
+                  placeholder="Ajouter une observation (optionnel)"
                   placeholderTextColor={placeholderColor}
                   value={manualObservation}
                   onChangeText={handleManualObservationChange}
@@ -2564,7 +2588,7 @@ export default function ScanScreen() {
                       backgroundColor: surfaceColor,
                     },
                   ]}
-                  placeholder="Saisir un numero de serie"
+                  placeholder="Saisir un numero de serie (optionnel)"
                   placeholderTextColor={placeholderColor}
                   value={manualSerialNumber}
                   onChangeText={handleManualSerialNumberChange}
