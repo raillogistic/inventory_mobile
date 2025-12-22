@@ -7,7 +7,7 @@ import React, {
   useState,
 } from "react";
 import { Platform, ToastAndroid } from "react-native";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { ApolloError, useApolloClient } from "@apollo/client";
 
 import { useAuth } from "@/hooks/use-auth";
@@ -159,27 +159,35 @@ async function buildScanCapturePayload(
     return undefined;
   }
 
+  const info = await FileSystem.getInfoAsync(scan.imageUri);
+  if (!info.exists) {
+    throw new Error("Image introuvable pour le scan.");
+  }
+
+  let base64: string;
   try {
-    const base64 = await FileSystem.readAsStringAsync(scan.imageUri, {
+    base64 = await FileSystem.readAsStringAsync(scan.imageUri, {
       encoding: FileSystem.EncodingType.Base64,
     });
-
-    if (!base64) {
-      return undefined;
-    }
-
-    const payload: ScanCapturePayload = {
-      image: {
-        data_base64: base64,
-        mime_type: guessImageMimeType(scan.imageUri),
-        filename: extractFileName(scan.imageUri),
-      },
-    };
-
-    return JSON.stringify(payload);
-  } catch {
-    return undefined;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Lecture image impossible.";
+    throw new Error(message);
   }
+
+  if (!base64) {
+    throw new Error("Image vide.");
+  }
+
+  const payload: ScanCapturePayload = {
+    image: {
+      data_base64: base64,
+      mime_type: guessImageMimeType(scan.imageUri),
+      filename: extractFileName(scan.imageUri),
+    },
+  };
+
+  return JSON.stringify(payload);
 }
 
 /**
@@ -428,7 +436,28 @@ export function InventoryOfflineProvider({
       let failedCount = 0;
 
       for (const batch of chunkItems(pendingScans, SCAN_SYNC_BATCH_SIZE)) {
-        const input = await Promise.all(batch.map(buildScanSyncInput));
+        const input: InventoryScanSyncInput[] = [];
+        const syncBatchScans: InventoryScanRecord[] = [];
+
+        for (const scan of batch) {
+          try {
+            const payload = await buildScanSyncInput(scan);
+            input.push(payload);
+            syncBatchScans.push(scan);
+          } catch (error) {
+            failedCount += 1;
+            const message =
+              error instanceof Error
+                ? error.message
+                : "Preparation image impossible.";
+            errorDetails.push(`${scan.codeArticle}: ${message}`);
+          }
+        }
+
+        if (input.length === 0) {
+          continue;
+        }
+
         const response = await client.mutate<
           SyncInventoryScansData,
           SyncInventoryScansVariables
@@ -443,7 +472,7 @@ export function InventoryOfflineProvider({
           results.map((result) => [result.local_id, result])
         );
 
-        for (const scan of batch) {
+        for (const scan of syncBatchScans) {
           const result = resultMap.get(scan.id);
           if (result?.ok && result.remote_id) {
             syncUpdates.push({ id: scan.id, remoteId: result.remote_id });
@@ -452,7 +481,7 @@ export function InventoryOfflineProvider({
             const reason =
               result?.errors && result.errors.length > 0
                 ? result.errors.join(", ")
-                : "Erreur inconnue.";
+                : "Reponse manquante.";
             errorDetails.push(`${scan.codeArticle}: ${reason}`);
           }
         }

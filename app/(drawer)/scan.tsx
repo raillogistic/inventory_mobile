@@ -28,6 +28,7 @@ import {
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
+import * as FileSystem from "expo-file-system/legacy";
 
 import { ThemedText } from "@/components/themed-text";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -863,6 +864,38 @@ export default function ScanScreen() {
     setManualError(null);
   }, []);
 
+  /** Persist the manual capture so it remains available for sync. */
+  const persistManualCapture = useCallback(async (uri: string | null) => {
+    if (!uri) {
+      return null;
+    }
+
+    const baseDir = FileSystem.documentDirectory;
+    if (!baseDir) {
+      return uri;
+    }
+
+    const match = uri.match(/\.(\w+)(?:\?|$)/);
+    const extension = match ? `.${match[1]}` : ".jpg";
+    const targetDir = `${baseDir}manual_scans`;
+    const targetUri = `${targetDir}/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}${extension}`;
+
+    try {
+      await FileSystem.makeDirectoryAsync(targetDir, { intermediates: true });
+    } catch {
+      // Ignore directory creation errors.
+    }
+
+    try {
+      await FileSystem.copyAsync({ from: uri, to: targetUri });
+      return targetUri;
+    } catch {
+      return uri;
+    }
+  }, []);
+
   /** Capture a still image of the scanned barcode. */
   const captureScanImage = useCallback(async (): Promise<string | null> => {
     try {
@@ -1011,7 +1044,8 @@ export default function ScanScreen() {
         skipProcessing: true,
       });
       if (snapshot && typeof snapshot === "object" && "uri" in snapshot) {
-        setManualImageUri(snapshot.uri ?? null);
+        const persistedUri = await persistManualCapture(snapshot.uri ?? null);
+        setManualImageUri(persistedUri);
         setManualError(null);
         return;
       }
@@ -1019,7 +1053,7 @@ export default function ScanScreen() {
     } catch {
       setManualError("Impossible de capturer l'image.");
     }
-  }, []);
+  }, [persistManualCapture]);
 
   /** Continue from the manual capture to the form. */
   const handleManualContinue = useCallback(() => {
@@ -1437,34 +1471,36 @@ export default function ScanScreen() {
       const isMissing = item.status === "missing";
       const isOtherLocation = item.status === "other";
       const isScanned = item.status === "scanned";
+
+      // Premium status-based colors
       const cardBorderColor = isMissing
-        ? missingBackgroundColor
+        ? PREMIUM_COLORS.error
         : isOtherLocation
-        ? warningBackgroundColor
+        ? PREMIUM_COLORS.warning
         : isScanned
-        ? successBackgroundColor
-        : borderColor;
+        ? PREMIUM_COLORS.success
+        : PREMIUM_COLORS.glass_border;
       const cardBackgroundColor = isMissing
-        ? missingBackgroundColor
+        ? "rgba(239, 68, 68, 0.15)"
         : isOtherLocation
-        ? warningBackgroundColor
+        ? "rgba(245, 158, 11, 0.15)"
         : isScanned
-        ? successBackgroundColor
-        : surfaceColor;
+        ? "rgba(16, 185, 129, 0.15)"
+        : PREMIUM_COLORS.glass_bg;
       const primaryTextColor = isMissing
-        ? missingTextColor
+        ? "#FCA5A5"
         : isOtherLocation
-        ? warningTextColor
+        ? "#FCD34D"
         : isScanned
-        ? successTextColor
-        : undefined;
+        ? "#6EE7B7"
+        : PREMIUM_COLORS.text_primary;
       const secondaryTextColor = isMissing
-        ? missingTextColor
+        ? "#FCA5A5"
         : isOtherLocation
-        ? warningTextColor
+        ? "#FCD34D"
         : isScanned
-        ? successTextColor
-        : mutedColor;
+        ? "#6EE7B7"
+        : PREMIUM_COLORS.text_muted;
 
       return (
         <View
@@ -1506,18 +1542,7 @@ export default function ScanScreen() {
         </View>
       );
     },
-    [
-      activeTab,
-      borderColor,
-      missingBackgroundColor,
-      missingTextColor,
-      mutedColor,
-      successBackgroundColor,
-      successTextColor,
-      surfaceColor,
-      warningBackgroundColor,
-      warningTextColor,
-    ]
+    [activeTab]
   );
 
   /** Change the active list tab. */
@@ -1965,15 +1990,11 @@ export default function ScanScreen() {
                     <ThemedText style={styles.cameraHudTitle}>
                       Photo article
                     </ThemedText>
-                    <ThemedText
-                      style={[styles.cameraHint, { color: mutedColor }]}
-                    >
-                      Cadrez l'article puis prenez la photo.
+                    <ThemedText style={styles.cameraHint}>
+                      Cadrez l&apos;article puis prenez la photo.
                     </ThemedText>
                     {manualError ? (
-                      <ThemedText
-                        style={[styles.manualErrorText, { color: "#FCA5A5" }]}
-                      >
+                      <ThemedText style={styles.manualErrorText}>
                         {manualError}
                       </ThemedText>
                     ) : null}
@@ -2036,18 +2057,21 @@ export default function ScanScreen() {
               </Modal>
             </View>
 
-            <View style={[styles.contextCard, { borderColor }]}>
-              <ThemedText type="defaultSemiBold">
+            <View style={styles.contextCard}>
+              <ThemedText
+                type="defaultSemiBold"
+                style={{ color: PREMIUM_COLORS.text_primary }}
+              >
                 Campagne: {session.campaign?.nom}
               </ThemedText>
-              <ThemedText style={[styles.contextMeta, { color: mutedColor }]}>
+              <ThemedText style={styles.contextMeta}>
                 Groupe: {session.group?.nom}
               </ThemedText>
-              <ThemedText style={[styles.contextMeta, { color: mutedColor }]}>
+              <ThemedText style={styles.contextMeta}>
                 Lieu: {session.location?.locationname}
               </ThemedText>
               <TouchableOpacity
-                style={[styles.changeButton, { borderColor }]}
+                style={styles.changeButton}
                 onPress={handleChangeLocation}
               >
                 <ThemedText style={styles.changeButtonText}>
@@ -2056,39 +2080,38 @@ export default function ScanScreen() {
               </TouchableOpacity>
             </View>
 
-            <View
-              style={[
-                styles.recapCard,
-                { borderColor, backgroundColor: surfaceColor },
-              ]}
-            >
+            <View style={styles.recapCard}>
               <View style={styles.recapRow}>
-                <ThemedText style={[styles.recapLabel, { color: mutedColor }]}>
+                <ThemedText style={styles.recapLabel}>
                   Scans enregistres
                 </ThemedText>
-                <ThemedText type="defaultSemiBold">{totalScanCount}</ThemedText>
+                <ThemedText
+                  type="defaultSemiBold"
+                  style={{ color: PREMIUM_COLORS.text_primary }}
+                >
+                  {totalScanCount}
+                </ThemedText>
               </View>
               {lastScan ? (
                 <View style={styles.recapRow}>
-                  <ThemedText
-                    style={[styles.recapLabel, { color: mutedColor }]}
-                  >
+                  <ThemedText style={styles.recapLabel}>
                     Dernier scan
                   </ThemedText>
                   <View style={styles.recapValueColumn}>
-                    <ThemedText type="defaultSemiBold">
+                    <ThemedText
+                      type="defaultSemiBold"
+                      style={{ color: PREMIUM_COLORS.text_primary }}
+                    >
                       {lastScan.code}
                     </ThemedText>
-                    <ThemedText
-                      style={[styles.recapMeta, { color: mutedColor }]}
-                    >
+                    <ThemedText style={styles.recapMeta}>
                       {formatTimestamp(lastScan.capturedAt)}
                     </ThemedText>
                   </View>
                 </View>
               ) : (
-                <ThemedText style={[styles.recapEmpty, { color: mutedColor }]}>
-                  Aucun scan enregistre pour l'instant.
+                <ThemedText style={styles.recapEmpty}>
+                  Aucun scan enregistre pour l&apos;instant.
                 </ThemedText>
               )}
             </View>
@@ -2098,9 +2121,7 @@ export default function ScanScreen() {
                 <ThemedText style={styles.errorTitle}>
                   Erreur lors du scan
                 </ThemedText>
-                <ThemedText
-                  style={[styles.errorMessage, { color: mutedColor }]}
-                >
+                <ThemedText style={styles.errorMessage}>
                   {errorDisplay}
                 </ThemedText>
               </View>
@@ -2127,32 +2148,28 @@ export default function ScanScreen() {
                 <ThemedText style={styles.errorTitle}>
                   Impossible de charger les articles.
                 </ThemedText>
-                <ThemedText
-                  style={[styles.errorMessage, { color: mutedColor }]}
-                >
+                <ThemedText style={styles.errorMessage}>
                   {listErrorDisplay}
                 </ThemedText>
               </View>
             ) : null}
 
             <View style={styles.sectionHeader}>
-              <ThemedText type="subtitle">
+              <ThemedText
+                type="subtitle"
+                style={{ color: PREMIUM_COLORS.text_primary }}
+              >
                 {activeTab === "scanned"
                   ? "Articles scannes"
                   : "Articles du lieu"}
               </ThemedText>
-              <ThemedText style={[styles.sectionMeta, { color: mutedColor }]}>
+              <ThemedText style={styles.sectionMeta}>
                 {activeTab === "scanned"
                   ? scannedTabCountLabel
                   : articleCountLabel}
               </ThemedText>
             </View>
-            <View
-              style={[
-                styles.tabRow,
-                { borderColor, backgroundColor: surfaceColor },
-              ]}
-            >
+            <View style={styles.tabRow}>
               {SCAN_LIST_TABS.map((tab) => {
                 const isActive = tab.id === activeTab;
                 return (
@@ -2160,9 +2177,9 @@ export default function ScanScreen() {
                     key={tab.id}
                     style={[
                       styles.tabButton,
-                      isActive
-                        ? { backgroundColor: highlightColor }
-                        : { backgroundColor: "transparent" },
+                      isActive && {
+                        backgroundColor: PREMIUM_COLORS.accent_primary,
+                      },
                     ]}
                     onPress={() => handleTabChange(tab.id)}
                   >
@@ -2170,7 +2187,9 @@ export default function ScanScreen() {
                       style={[
                         styles.tabButtonText,
                         {
-                          color: isActive ? buttonTextColor : textColor,
+                          color: isActive
+                            ? PREMIUM_COLORS.text_primary
+                            : PREMIUM_COLORS.text_muted,
                         },
                       ]}
                     >
@@ -2185,8 +2204,11 @@ export default function ScanScreen() {
         ListEmptyComponent={
           showArticleLoading ? (
             <View style={styles.emptyContainer}>
-              <ActivityIndicator size="large" color={highlightColor} />
-              <ThemedText style={[styles.emptyMessage, { color: mutedColor }]}>
+              <ActivityIndicator
+                size="large"
+                color={PREMIUM_COLORS.accent_primary}
+              />
+              <ThemedText style={styles.emptyMessage}>
                 Chargement des articles...
               </ThemedText>
             </View>
@@ -2194,22 +2216,27 @@ export default function ScanScreen() {
             <View style={styles.emptyContainer}>
               {activeTab === "scanned" ? (
                 <>
-                  <ThemedText type="subtitle">Aucun scan enregistre</ThemedText>
                   <ThemedText
-                    style={[styles.emptyMessage, { color: mutedColor }]}
+                    type="subtitle"
+                    style={{ color: PREMIUM_COLORS.text_secondary }}
                   >
+                    Aucun scan enregistre
+                  </ThemedText>
+                  <ThemedText style={styles.emptyMessage}>
                     Commencez a scanner pour remplir cette liste.
                   </ThemedText>
                 </>
               ) : (
                 <>
-                  <ThemedText type="subtitle">
+                  <ThemedText
+                    type="subtitle"
+                    style={{ color: PREMIUM_COLORS.text_secondary }}
+                  >
                     Aucun article pour ce lieu
                   </ThemedText>
-                  <ThemedText
-                    style={[styles.emptyMessage, { color: mutedColor }]}
-                  >
-                    Verifiez les affectations ou contactez l'administrateur.
+                  <ThemedText style={styles.emptyMessage}>
+                    Verifiez les affectations ou contactez
+                    l&apos;administrateur.
                   </ThemedText>
                 </>
               )}
@@ -2228,10 +2255,7 @@ export default function ScanScreen() {
         animationType="fade"
         onRequestClose={handleCloseScanModal}
       >
-        <Pressable
-          style={[styles.modalOverlay, { backgroundColor: modalOverlayColor }]}
-          onPress={handleCloseScanModal}
-        >
+        <Pressable style={styles.modalOverlay} onPress={handleCloseScanModal}>
           {scanDetail ? (
             <Pressable
               style={[
@@ -2702,30 +2726,39 @@ const styles = StyleSheet.create({
   },
   headerContainer: {
     gap: 16,
+    paddingHorizontal: 20,
+    paddingTop: 20,
   },
   header: {
     gap: 6,
   },
   subtitle: {
     fontSize: 14,
+    color: PREMIUM_COLORS.text_muted,
   },
   contextCard: {
+    backgroundColor: PREMIUM_COLORS.glass_bg,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    gap: 4,
+    borderColor: PREMIUM_COLORS.glass_border,
+    borderRadius: 16,
+    padding: 16,
+    gap: 6,
   },
   cameraCard: {
+    backgroundColor: PREMIUM_COLORS.glass_bg,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    gap: 10,
+    borderColor: PREMIUM_COLORS.glass_border,
+    borderRadius: 16,
+    padding: 16,
+    gap: 12,
   },
   recapCard: {
+    backgroundColor: PREMIUM_COLORS.glass_bg,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    gap: 8,
+    borderColor: PREMIUM_COLORS.glass_border,
+    borderRadius: 16,
+    padding: 16,
+    gap: 10,
   },
   recapRow: {
     flexDirection: "row",
@@ -2735,6 +2768,7 @@ const styles = StyleSheet.create({
   },
   recapLabel: {
     fontSize: 13,
+    color: PREMIUM_COLORS.text_muted,
   },
   recapValueColumn: {
     alignItems: "flex-end",
@@ -2742,31 +2776,38 @@ const styles = StyleSheet.create({
   },
   recapMeta: {
     fontSize: 12,
+    color: PREMIUM_COLORS.text_muted,
   },
   recapEmpty: {
     fontSize: 13,
+    color: PREMIUM_COLORS.text_muted,
+    fontStyle: "italic",
   },
   cameraMeta: {
     fontSize: 13,
+    color: PREMIUM_COLORS.text_muted,
   },
   scanModeButton: {
     borderWidth: 2,
-    borderRadius: 18,
-    padding: 2,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.6,
-    shadowRadius: 18,
-    elevation: 10,
+    borderRadius: 20,
+    padding: 3,
+    borderColor: PREMIUM_COLORS.accent_primary,
+    shadowColor: PREMIUM_COLORS.accent_primary,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 12,
     overflow: "hidden",
   },
   scanModeGlow: {
     position: "absolute",
-    top: -8,
-    left: -8,
-    right: -8,
-    bottom: -8,
-    opacity: 0.25,
-    borderRadius: 22,
+    top: -10,
+    left: -10,
+    right: -10,
+    bottom: -10,
+    opacity: 0.3,
+    borderRadius: 24,
+    backgroundColor: PREMIUM_COLORS.accent_primary,
   },
   scanModeRadial: {
     position: "absolute",
@@ -2776,7 +2817,8 @@ const styles = StyleSheet.create({
     top: -80,
     left: "50%",
     marginLeft: -110,
-    opacity: 0.18,
+    opacity: 0.15,
+    backgroundColor: PREMIUM_COLORS.accent_primary,
   },
   scanModeButtonInner: {
     width: "100%",
@@ -2813,11 +2855,13 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.5,
     textTransform: "uppercase",
+    color: PREMIUM_COLORS.text_primary,
   },
   scanModeButtonSubtitle: {
     fontSize: 12,
     fontWeight: "600",
     letterSpacing: 0.4,
+    color: PREMIUM_COLORS.text_muted,
   },
   manualContainer: {
     marginTop: 12,
@@ -2838,6 +2882,7 @@ const styles = StyleSheet.create({
   cameraCloseButtonText: {
     fontSize: 12,
     fontWeight: "600",
+    color: PREMIUM_COLORS.text_primary,
   },
   manualCaptureActions: {
     flexDirection: "row",
@@ -2859,9 +2904,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: "center",
     marginTop: 8,
+    color: PREMIUM_COLORS.error,
   },
   cameraHint: {
     fontSize: 13,
+    color: PREMIUM_COLORS.text_muted,
   },
   cameraHud: {
     position: "absolute",
@@ -2908,70 +2955,91 @@ const styles = StyleSheet.create({
   },
   contextMeta: {
     fontSize: 13,
+    color: PREMIUM_COLORS.text_muted,
   },
   changeButton: {
     alignSelf: "flex-start",
+    backgroundColor: "rgba(255, 107, 0, 0.1)",
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginTop: 8,
+    borderColor: PREMIUM_COLORS.accent_primary,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginTop: 10,
   },
   changeButtonText: {
     fontSize: 13,
     fontWeight: "600",
+    color: PREMIUM_COLORS.accent_primary,
   },
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginTop: 6,
+    marginTop: 8,
   },
   codeInput: {
     flex: 1,
+    backgroundColor: PREMIUM_COLORS.input_bg,
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderColor: PREMIUM_COLORS.input_border,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     fontSize: 16,
+    color: PREMIUM_COLORS.text_primary,
   },
   scanButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: PREMIUM_COLORS.accent_primary,
     alignItems: "center",
     justifyContent: "center",
+    shadowColor: PREMIUM_COLORS.accent_primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
   },
   scanButtonText: {
     fontSize: 20,
     fontWeight: "600",
+    color: PREMIUM_COLORS.text_primary,
   },
   errorContainer: {
-    borderRadius: 12,
+    backgroundColor: PREMIUM_COLORS.error_bg,
+    borderRadius: 14,
     padding: 16,
     gap: 8,
-    marginTop: 4,
+    marginTop: 6,
   },
   infoContainer: {
-    borderRadius: 12,
+    backgroundColor: "rgba(255, 107, 0, 0.08)",
+    borderRadius: 14,
     borderWidth: 1,
+    borderColor: "rgba(255, 107, 0, 0.2)",
     padding: 16,
     gap: 8,
-    marginTop: 4,
+    marginTop: 6,
   },
   errorTitle: {
     fontSize: 16,
     fontWeight: "600",
+    color: PREMIUM_COLORS.error,
   },
   errorMessage: {
     fontSize: 14,
+    color: PREMIUM_COLORS.text_muted,
   },
   infoTitle: {
     fontSize: 15,
     fontWeight: "600",
+    color: PREMIUM_COLORS.accent_primary,
   },
   infoMessage: {
     fontSize: 14,
+    color: PREMIUM_COLORS.text_muted,
   },
   sectionHeader: {
     flexDirection: "row",
@@ -2980,10 +3048,13 @@ const styles = StyleSheet.create({
   },
   sectionMeta: {
     fontSize: 13,
+    color: PREMIUM_COLORS.text_muted,
   },
   tabRow: {
     flexDirection: "row",
+    backgroundColor: PREMIUM_COLORS.glass_bg,
     borderWidth: 1,
+    borderColor: PREMIUM_COLORS.glass_border,
     borderRadius: 999,
     padding: 4,
     marginTop: 12,
@@ -2992,13 +3063,14 @@ const styles = StyleSheet.create({
   tabButton: {
     flex: 1,
     borderRadius: 999,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     alignItems: "center",
   },
   tabButtonText: {
     fontSize: 13,
     fontWeight: "600",
+    color: PREMIUM_COLORS.text_muted,
   },
   listContent: {
     flexGrow: 1,
@@ -3008,158 +3080,205 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   recentCard: {
+    backgroundColor: PREMIUM_COLORS.glass_bg,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
+    borderColor: PREMIUM_COLORS.glass_border,
+    borderRadius: 14,
+    padding: 14,
     gap: 6,
   },
   recentDescription: {
     fontSize: 13,
+    color: PREMIUM_COLORS.text_muted,
   },
   recentMeta: {
     fontSize: 12,
+    color: PREMIUM_COLORS.text_muted,
   },
   emptyContainer: {
-    paddingVertical: 24,
-    gap: 6,
+    paddingVertical: 32,
+    gap: 8,
     alignItems: "center",
   },
   emptyMessage: {
     fontSize: 14,
     textAlign: "center",
+    color: PREMIUM_COLORS.text_muted,
   },
   missingContainer: {
     flex: 1,
-    paddingHorizontal: 24,
+    paddingHorizontal: 32,
     justifyContent: "center",
     alignItems: "center",
-    gap: 12,
+    gap: 16,
   },
   missingText: {
     fontSize: 14,
     textAlign: "center",
+    color: PREMIUM_COLORS.text_muted,
   },
   retryButton: {
-    borderRadius: 10,
-    paddingVertical: 10,
+    backgroundColor: PREMIUM_COLORS.accent_primary,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    marginTop: 8,
     alignItems: "center",
-    marginTop: 4,
+    shadowColor: PREMIUM_COLORS.accent_primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
   },
   retryButtonText: {
     fontSize: 15,
-    fontWeight: "600",
-    color: "#FFFFFF",
+    fontWeight: "700",
+    color: PREMIUM_COLORS.text_primary,
   },
   modalOverlay: {
     flex: 1,
     justifyContent: "center",
-    padding: 24,
+    padding: 20,
+    backgroundColor: "rgba(10, 22, 40, 0.92)",
   },
   modalCard: {
-    borderWidth: 2,
-    borderRadius: 20,
+    backgroundColor: PREMIUM_COLORS.gradient_start,
+    borderWidth: 1,
+    borderColor: PREMIUM_COLORS.glass_border,
+    borderRadius: 24,
     padding: 24,
-    minHeight: "70%",
+    minHeight: "65%",
     justifyContent: "space-between",
+    gap: 20,
+  },
+  manualFormScroll: {
+    flex: 1,
+  },
+  manualFormContent: {
     gap: 16,
+    paddingBottom: 12,
   },
   modalCloseButton: {
     position: "absolute",
-    top: 14,
-    right: 14,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    top: 16,
+    right: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: PREMIUM_COLORS.glass_bg,
     alignItems: "center",
     justifyContent: "center",
+    zIndex: 10,
   },
   modalContent: {
     alignItems: "center",
-    gap: 12,
+    gap: 14,
   },
   modalStatusBadge: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 999,
   },
   modalStatusText: {
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   modalCodeText: {
     textAlign: "center",
+    color: PREMIUM_COLORS.text_primary,
   },
   modalDescription: {
     fontSize: 18,
     textAlign: "center",
+    color: PREMIUM_COLORS.text_secondary,
   },
   manualPreview: {
     width: "100%",
     height: 180,
-    borderRadius: 12,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: PREMIUM_COLORS.glass_border,
   },
   modalMeta: {
     fontSize: 14,
     textAlign: "center",
+    color: PREMIUM_COLORS.text_muted,
   },
   alreadyScannedText: {
     fontSize: 13,
     textAlign: "center",
+    color: PREMIUM_COLORS.warning,
   },
   modalField: {
     width: "100%",
-    gap: 6,
+    gap: 8,
   },
   modalFieldLabel: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "600",
+    color: PREMIUM_COLORS.text_muted,
   },
   modalInput: {
+    backgroundColor: PREMIUM_COLORS.input_bg,
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
+    borderColor: PREMIUM_COLORS.input_border,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: PREMIUM_COLORS.text_primary,
   },
   modalButton: {
-    borderRadius: 12,
-    paddingVertical: 14,
+    flex: 1,
+    backgroundColor: PREMIUM_COLORS.accent_primary,
+    borderRadius: 14,
+    paddingVertical: 16,
     alignItems: "center",
+    shadowColor: PREMIUM_COLORS.accent_primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
   },
   modalButtonText: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "#FFFFFF",
+    fontWeight: "700",
+    color: PREMIUM_COLORS.text_primary,
   },
   modalButtonRow: {
     flexDirection: "row",
     gap: 12,
-    alignItems: "center",
+    alignItems: "stretch",
   },
   modalButtonSecondary: {
     flex: 1,
+    backgroundColor: PREMIUM_COLORS.glass_bg,
     borderWidth: 1,
-    borderRadius: 12,
-    paddingVertical: 14,
+    borderColor: PREMIUM_COLORS.glass_border,
+    borderRadius: 14,
+    paddingVertical: 16,
     alignItems: "center",
   },
   modalButtonSecondaryText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "600",
+    color: PREMIUM_COLORS.text_secondary,
   },
   etatSection: {
     width: "100%",
-    gap: 10,
-    paddingTop: 4,
+    gap: 12,
+    paddingTop: 8,
   },
   etatOptions: {
-    gap: 12,
+    gap: 10,
   },
   etatOption: {
+    backgroundColor: PREMIUM_COLORS.glass_bg,
     borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    borderColor: PREMIUM_COLORS.glass_border,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
   },
   etatOptionContent: {
     flexDirection: "row",
@@ -3169,11 +3288,13 @@ const styles = StyleSheet.create({
   },
   etatOptionText: {
     fontSize: 15,
-    fontWeight: "700",
+    fontWeight: "600",
+    color: PREMIUM_COLORS.text_primary,
   },
   etatErrorText: {
     fontSize: 13,
     textAlign: "center",
-    color: "#FCA5A5",
+    color: PREMIUM_COLORS.error,
+    marginTop: 4,
   },
 });

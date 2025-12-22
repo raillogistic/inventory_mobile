@@ -9,6 +9,7 @@ import {
   SectionList,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -51,6 +52,40 @@ type LocationSection = {
 
 /** Clé pour les articles sans localisation */
 const UNKNOWN_LOCATION_KEY = "unknown-location";
+
+/**
+ * Normalise une valeur pour la recherche.
+ */
+function normalizeSearchValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
+ * Indique si un article correspond à une recherche.
+ */
+function matchesArticleSearch(
+  article: OfflineArticleEntry,
+  query: string
+): boolean {
+  if (!query) {
+    return true;
+  }
+
+  const code = normalizeSearchValue(article.code);
+  const description = normalizeSearchValue(article.desc ?? "");
+  return code.includes(query) || description.includes(query);
+}
+
+/**
+ * Filtre les articles par recherche (code ou description).
+ */
+function filterArticlesByQuery(
+  articles: OfflineArticleEntry[],
+  query: string
+): OfflineArticleEntry[] {
+  const normalized = normalizeSearchValue(query);
+  return articles.filter((article) => matchesArticleSearch(article, normalized));
+}
 
 /**
  * Construit les sections par localisation à partir des articles hors ligne.
@@ -97,15 +132,27 @@ export default function ListesScreen() {
   const { cache, isHydrated, isSyncing, syncAll, syncError } =
     useInventoryOffline();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [expandedLocations, setExpandedLocations] = useState<Set<string>>(
+    () => new Set()
+  );
 
+  const filteredArticles = useMemo(
+    () => filterArticlesByQuery(cache.articles, searchQuery),
+    [cache.articles, searchQuery]
+  );
   const sections = useMemo(
-    () => buildLocationSections(cache.articles),
-    [cache.articles]
+    () => buildLocationSections(filteredArticles),
+    [filteredArticles]
   );
   const hasArticles = cache.articles.length > 0;
   const isLoading = !isHydrated || (isSyncing && !hasArticles);
+  const hasSearch = normalizeSearchValue(searchQuery).length > 0;
+  const visibleArticleCount = hasSearch
+    ? filteredArticles.length
+    : cache.articles.length;
 
-  /** Rafraîchit le cache hors ligne. */
+  /** Rafra?chit le cache hors ligne. */
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
@@ -115,9 +162,27 @@ export default function ListesScreen() {
     }
   }, [syncAll]);
 
+  /** Met ? jour la recherche. */
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchQuery(value);
+  }, []);
+
+  /** Bascule l'accordion d'une localisation. */
+  const handleToggleLocation = useCallback((locationId: string) => {
+    setExpandedLocations((current) => {
+      const next = new Set(current);
+      if (next.has(locationId)) {
+        next.delete(locationId);
+      } else {
+        next.add(locationId);
+      }
+      return next;
+    });
+  }, []);
+
   /** Rend une ligne d'article. */
   const renderItem = useCallback(
-    ({ item }: { item: ArticleListItem }) => (
+    (item: ArticleListItem) => (
       <View style={styles.article_card}>
         <View style={styles.article_icon}>
           <IconSymbol
@@ -147,27 +212,50 @@ export default function ListesScreen() {
     []
   );
 
-  /** Rend l'en-tête d'une section (localisation). */
-  const renderSectionHeader = useCallback(
-    ({ section }: { section: LocationSection }) => (
-      <View style={styles.section_header}>
-        <View style={styles.section_header_content}>
-          <IconSymbol
-            name="folder.fill"
-            size={16}
-            color={PREMIUM_COLORS.accent_primary}
-          />
-          <Text style={styles.section_title}>{section.title}</Text>
+  /** Rend une section accord?on avec ses articles. */
+  const renderSection = useCallback(
+    ({ item }: { item: LocationSection }) => {
+      const isExpanded = hasSearch || expandedLocations.has(item.id);
+      return (
+        <View style={styles.section_block}>
+          <TouchableOpacity
+            style={styles.section_header}
+            onPress={() => handleToggleLocation(item.id)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.section_header_content}>
+              <IconSymbol
+                name="folder.fill"
+                size={16}
+                color={PREMIUM_COLORS.accent_primary}
+              />
+              <Text style={styles.section_title}>{item.title}</Text>
+            </View>
+            <View style={styles.section_header_right}>
+              <View style={styles.section_count_badge}>
+                <Text style={styles.section_count}>{item.data.length}</Text>
+              </View>
+              <IconSymbol
+                name={isExpanded ? "chevron.down" : "chevron.right"}
+                size={16}
+                color={PREMIUM_COLORS.text_muted}
+              />
+            </View>
+          </TouchableOpacity>
+          {isExpanded ? (
+            <View style={styles.section_items}>
+              {item.data.map((article) => (
+                <View key={article.id}>{renderItem(article)}</View>
+              ))}
+            </View>
+          ) : null}
         </View>
-        <View style={styles.section_count_badge}>
-          <Text style={styles.section_count}>{section.data.length}</Text>
-        </View>
-      </View>
-    ),
-    []
+      );
+    },
+    [expandedLocations, handleToggleLocation, hasSearch, renderItem]
   );
 
-  /** Rend l'en-tête de la liste. */
+  /** Rend l'en-t?te de la liste. */
   const renderHeader = useCallback(() => {
     return (
       <View style={styles.header_section}>
@@ -184,7 +272,7 @@ export default function ListesScreen() {
               <View style={styles.header_text}>
                 <Text style={styles.header_title}>Listes</Text>
                 <Text style={styles.header_subtitle}>
-                  {cache.articles.length} article(s) • {sections.length} lieu(x)
+                  {visibleArticleCount} article(s) - {sections.length} lieu(x)
                 </Text>
               </View>
             </View>
@@ -199,6 +287,23 @@ export default function ListesScreen() {
               end={{ x: 1, y: 0 }}
               style={styles.separator}
             />
+
+            <View style={styles.search_container}>
+              <IconSymbol
+                name="magnifyingglass"
+                size={16}
+                color={PREMIUM_COLORS.text_muted}
+              />
+              <TextInput
+                style={styles.search_input}
+                placeholder="Rechercher par code ou description"
+                placeholderTextColor={PREMIUM_COLORS.text_muted}
+                value={searchQuery}
+                onChangeText={handleSearchChange}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
 
             <TouchableOpacity
               style={styles.refresh_button}
@@ -245,14 +350,16 @@ export default function ListesScreen() {
       </View>
     );
   }, [
-    cache.articles.length,
-    sections.length,
     handleRefresh,
+    handleSearchChange,
     isRefreshing,
+    searchQuery,
+    sections.length,
     syncError,
+    visibleArticleCount,
   ]);
 
-  /** Rend l'état vide ou de chargement. */
+  /** Rend l'?tat vide ou de chargement. */
   const renderEmpty = useCallback(() => {
     if (isLoading) {
       return (
@@ -273,51 +380,61 @@ export default function ListesScreen() {
         <View style={styles.empty_icon}>
           <IconSymbol name="tray" size={40} color={PREMIUM_COLORS.text_muted} />
         </View>
-        <Text style={styles.empty_title}>Aucun article enregistré</Text>
-        <Text style={styles.empty_subtitle}>
-          Lancez une synchronisation pour charger les articles.
+        <Text style={styles.empty_title}>
+          {hasSearch
+            ? "Aucun article pour cette recherche"
+            : "Aucun article enregistre"}
         </Text>
-        <TouchableOpacity
-          style={styles.empty_button}
-          onPress={handleRefresh}
-          activeOpacity={0.7}
-        >
-          <LinearGradient
-            colors={[
-              PREMIUM_COLORS.accent_primary,
-              PREMIUM_COLORS.accent_secondary,
-            ]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.empty_button_gradient}
+        <Text style={styles.empty_subtitle}>
+          {hasSearch
+            ? "Essayez un autre code ou une autre description."
+            : "Lancez une synchronisation pour charger les articles."}
+        </Text>
+        {hasSearch ? null : (
+          <TouchableOpacity
+            style={styles.empty_button}
+            onPress={handleRefresh}
+            activeOpacity={0.7}
           >
-            <IconSymbol
-              name="arrow.clockwise"
-              size={16}
-              color={PREMIUM_COLORS.text_primary}
-            />
-            <Text style={styles.empty_button_text}>Synchroniser</Text>
-          </LinearGradient>
-        </TouchableOpacity>
+            <LinearGradient
+              colors={[
+                PREMIUM_COLORS.accent_primary,
+                PREMIUM_COLORS.accent_secondary,
+              ]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.empty_button_gradient}
+            >
+              <IconSymbol
+                name="arrow.clockwise"
+                size={16}
+                color={PREMIUM_COLORS.text_primary}
+              />
+              <Text style={styles.empty_button_text}>Synchroniser</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
       </View>
     );
-  }, [isLoading, handleRefresh]);
+  }, [hasSearch, handleRefresh, isLoading]);
 
   return (
     <PremiumScreenWrapper>
-      <SectionList
-        sections={sections}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        renderSectionHeader={renderSectionHeader}
-        ListHeaderComponent={renderHeader}
-        ListEmptyComponent={renderEmpty}
-        contentContainerStyle={styles.list_content}
-        showsVerticalScrollIndicator={false}
-        stickySectionHeadersEnabled={false}
-        refreshing={isRefreshing}
-        onRefresh={handleRefresh}
-      />
+      <View style={styles.list_wrapper}>
+        <SectionList
+          sections={[{ id: "accordion", title: "accordion", data: sections }]}
+          keyExtractor={(item) => item.id}
+          renderItem={renderSection}
+          renderSectionHeader={() => null}
+          ListHeaderComponent={renderHeader}
+          ListEmptyComponent={renderEmpty}
+          contentContainerStyle={styles.list_content}
+          showsVerticalScrollIndicator={false}
+          stickySectionHeadersEnabled={false}
+          refreshing={isRefreshing}
+          onRefresh={handleRefresh}
+        />
+      </View>
     </PremiumScreenWrapper>
   );
 }
@@ -326,6 +443,9 @@ export default function ListesScreen() {
  * Styles du composant ListesScreen.
  */
 const styles = StyleSheet.create({
+  list_wrapper: {
+    flex: 1,
+  },
   list_content: {
     flexGrow: 1,
     paddingHorizontal: 20,
@@ -379,6 +499,23 @@ const styles = StyleSheet.create({
     height: 1,
     marginVertical: 16,
   },
+  search_container: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: PREMIUM_COLORS.input_bg,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: PREMIUM_COLORS.input_border,
+    paddingHorizontal: 14,
+    gap: 10,
+    marginBottom: 16,
+  },
+  search_input: {
+    flex: 1,
+    fontSize: 16,
+    color: PREMIUM_COLORS.text_primary,
+    paddingVertical: 12,
+  },
   refresh_button: {
     borderRadius: 12,
     overflow: "hidden",
@@ -410,6 +547,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   /* Section header */
+  section_block: {
+    gap: 8,
+    marginBottom: 8,
+  },
   section_header: {
     flexDirection: "row",
     alignItems: "center",
@@ -428,6 +569,11 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: PREMIUM_COLORS.text_primary,
   },
+  section_header_right: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
   section_count_badge: {
     backgroundColor: PREMIUM_COLORS.glass_highlight,
     paddingHorizontal: 10,
@@ -438,6 +584,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     color: PREMIUM_COLORS.text_secondary,
+  },
+  section_items: {
+    gap: 8,
   },
   /* Article card */
   article_card: {
