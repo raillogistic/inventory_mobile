@@ -60,6 +60,8 @@ type RecentScan = {
   description: string | null;
   /** Whether the scanned code matches a known article. */
   hasArticle: boolean;
+  /** Optional current location name of the article at load time. */
+  previousLocationName: string | null;
   /** Capture timestamp as an ISO string. */
   capturedAt: string;
 };
@@ -78,6 +80,10 @@ type LocationArticleItem = {
   code: string;
   /** Optional article description. */
   description: string | null;
+  /** Previous location name captured from the offline cache. */
+  previousLocationName: string | null;
+  /** New location name based on the current selection. */
+  nextLocationName: string | null;
   /** Status used to drive list coloring. */
   status: LocationArticleStatus;
   /** Source list for the row. */
@@ -431,6 +437,7 @@ export default function ScanScreen() {
   const locationArticlesLoading =
     !isHydrated || (isSyncing && cache.articles.length === 0);
   const locationArticlesErrorMessage = syncError;
+  const selectedLocationName = session.location?.locationname ?? "Lieu inconnu";
   const articleLookup = useMemo(
     () => buildOfflineArticleLookup(cache.articles),
     [cache.articles]
@@ -447,6 +454,7 @@ export default function ScanScreen() {
           code: scan.codeArticle,
           description,
           hasArticle,
+          previousLocationName: lookup?.currentLocation?.locationname ?? null,
           capturedAt: scan.capturedAt,
         };
       }),
@@ -469,7 +477,12 @@ export default function ScanScreen() {
 
     const map = new Map<
       string,
-      { id: string; code: string; description: string | null }
+      {
+        id: string;
+        code: string;
+        description: string | null;
+        previousLocationName: string | null;
+      }
     >();
 
     for (const article of cache.articles) {
@@ -490,6 +503,7 @@ export default function ScanScreen() {
           id: article.id,
           code: article.code,
           description: article.desc ?? null,
+          previousLocationName: article.currentLocation?.locationname ?? null,
         });
       }
     }
@@ -517,11 +531,13 @@ export default function ScanScreen() {
           id: article.id,
           code: article.code,
           description: article.description,
+          previousLocationName: article.previousLocationName ?? null,
+          nextLocationName: selectedLocationName,
           status: isScanned ? "scanned" : "pending",
           source: "location",
         };
       }),
-    [existingCodes, locationArticles]
+    [existingCodes, locationArticles, selectedLocationName]
   );
   const extraScanItems = useMemo<LocationArticleItem[]>(() => {
     const items: LocationArticleItem[] = [];
@@ -545,13 +561,15 @@ export default function ScanScreen() {
         id: scan.id,
         code: scan.code,
         description: scan.description ?? null,
+        previousLocationName: scan.previousLocationName ?? null,
+        nextLocationName: selectedLocationName,
         status,
         source: "extra",
       });
     }
 
     return items;
-  }, [locationArticleCodeSet, resolvedScans]);
+  }, [locationArticleCodeSet, resolvedScans, selectedLocationName]);
   const scannedTabItems = useMemo<LocationArticleItem[]>(() => {
     const scannedLocationItems = locationArticleItems.filter(
       (item) => item.status === "scanned"
@@ -1148,10 +1166,25 @@ export default function ScanScreen() {
               {item.description}
             </ThemedText>
           ) : null}
+          {activeTab === "scanned" ? (
+            <>
+              <ThemedText
+                style={[styles.recentMeta, { color: secondaryTextColor }]}
+              >
+                Ancien lieu: {item.previousLocationName ?? "Inconnu"}
+              </ThemedText>
+              <ThemedText
+                style={[styles.recentMeta, { color: secondaryTextColor }]}
+              >
+                Nouveau lieu: {item.nextLocationName ?? "Lieu inconnu"}
+              </ThemedText>
+            </>
+          ) : null}
         </View>
       );
     },
     [
+      activeTab,
       borderColor,
       missingBackgroundColor,
       missingTextColor,
