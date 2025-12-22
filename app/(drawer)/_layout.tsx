@@ -24,7 +24,12 @@ import {
   View,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { CameraView, type BarcodeScanningResult, type BarcodeType, useCameraPermissions } from "expo-camera";
+import {
+  CameraView,
+  type BarcodeScanningResult,
+  type BarcodeType,
+  useCameraPermissions,
+} from "expo-camera";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useAuth } from "@/hooks/use-auth";
@@ -272,25 +277,14 @@ export default function DrawerLayout() {
       showSyncMessage(message);
     }
   }, [isScanSyncing, showSyncMessage, syncScans]);
-/** Render the left header actions (drawer toggle + quick lookup). */
-const renderHeaderLeft = useCallback(() => {
-  return (
-    <View style={styles.header_left_actions}>
-      <DrawerToggleButton tintColor={COLORS.text_primary} />
-      <TouchableOpacity
-        style={styles.quick_lookup_button}
-        onPress={handleOpenQuickLookup}
-        accessibilityRole="button"
-        accessibilityLabel="Consulter un article"
-        activeOpacity={0.8}
-      >
-        <IconSymbol name="eye" size={16} color={COLORS.text_primary} />
-        <Text style={styles.quick_lookup_text}>Voir article</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}, [handleOpenQuickLookup]);
-
+  /** Render the left header actions (drawer toggle). */
+  const renderHeaderLeft = useCallback(() => {
+    return (
+      <View style={styles.header_left_actions}>
+        <DrawerToggleButton tintColor={COLORS.text_primary} />
+      </View>
+    );
+  }, []);
 
   /** Rend les actions d'en-tête pour le statut de sync et la sync manuelle. */
   const renderHeaderActions = useCallback(() => {
@@ -301,6 +295,16 @@ const renderHeaderLeft = useCallback(() => {
             <ActivityIndicator size="small" color={COLORS.accent_primary} />
           </View>
         )}
+        <TouchableOpacity
+          style={styles.quick_lookup_button}
+          onPress={handleOpenQuickLookup}
+          accessibilityRole="button"
+          accessibilityLabel="Consulter un article"
+          activeOpacity={0.8}
+        >
+          <IconSymbol name="eye" size={16} color={COLORS.text_primary} />
+          <Text style={styles.quick_lookup_text}>VOIR ARTICLE</Text>
+        </TouchableOpacity>
         <TouchableOpacity
           style={[
             styles.sync_button,
@@ -336,7 +340,12 @@ const renderHeaderLeft = useCallback(() => {
         </TouchableOpacity>
       </View>
     );
-  }, [handleSyncScans, isScanSyncing, shouldShowSyncIndicator]);
+  }, [
+    handleOpenQuickLookup,
+    handleSyncScans,
+    isScanSyncing,
+    shouldShowSyncIndicator,
+  ]);
   /** Render the quick article lookup modal overlay. */
   const renderQuickLookupModal = useCallback(() => {
     const locationNames =
@@ -437,6 +446,10 @@ const renderHeaderLeft = useCallback(() => {
                 onPress={handleQuickLookupReset}
                 accessibilityRole="button"
                 accessibilityLabel="Scanner a nouveau"
+                style={[
+                  styles.quick_lookup_action,
+                  quickLookupLoading && styles.quick_lookup_action_disabled,
+                ]}
               >
                 <Text style={styles.quick_lookup_reset_text}>
                   Scanner a nouveau
@@ -445,10 +458,7 @@ const renderHeaderLeft = useCallback(() => {
             </View>
             {quickLookupLoading ? (
               <View style={styles.quick_lookup_loading}>
-                <ActivityIndicator
-                  size="small"
-                  color={COLORS.accent_primary}
-                />
+                <ActivityIndicator size="small" color={COLORS.accent_primary} />
               </View>
             ) : null}
             {quickLookupError ? (
@@ -492,8 +502,6 @@ const renderHeaderLeft = useCallback(() => {
     quickLookupLoading,
     quickLookupResult,
   ]);
-
-
 
   /** Rend le contenu du drawer avec une action de déconnexion explicite. */
   const renderDrawerContent = useCallback(
@@ -577,100 +585,104 @@ const renderHeaderLeft = useCallback(() => {
         drawerContent={renderDrawerContent}
         initialRouteName="lieux"
         screenOptions={{
-        headerShown: true,
-        headerTintColor: COLORS.text_primary,
-        headerTitleStyle: styles.header_title_style,
-        headerStyle: styles.header_style,
-        headerLeft: renderHeaderLeft,
-        headerRight: renderHeaderActions,
-        drawerActiveTintColor: COLORS.accent_primary,
-        drawerInactiveTintColor: COLORS.text_secondary,
-        drawerActiveBackgroundColor: COLORS.drawer_active_bg,
-        drawerLabelStyle: styles.drawer_label,
-        drawerItemStyle: styles.drawer_item,
-        drawerStyle: styles.drawer_style,
-      }}
-    >
-      <Drawer.Screen
-        name="index"
-        options={{
-          title: "Campagnes",
-          drawerIcon: ({ color }) => (
-            <IconSymbol name="folder.fill" size={20} color={color} />
-          ),
+          headerShown: true,
+          headerTintColor: COLORS.text_primary,
+          headerTitleStyle: styles.header_title_style,
+          headerStyle: styles.header_style,
+          headerLeft: renderHeaderLeft,
+          headerRight: renderHeaderActions,
+          drawerActiveTintColor: COLORS.accent_primary,
+          drawerInactiveTintColor: COLORS.text_secondary,
+          drawerActiveBackgroundColor: COLORS.drawer_active_bg,
+          drawerLabelStyle: styles.drawer_label,
+          drawerItemStyle: styles.drawer_item,
+          drawerStyle: styles.drawer_style,
         }}
-      />
-      <Drawer.Screen
-        name="groupes"
-        options={{
-          title: "Groupes",
-          drawerIcon: ({ color }) => (
-            <IconSymbol name="rectangle.stack.fill" size={20} color={color} />
-          ),
-        }}
-      />
-      <Drawer.Screen
-        name="lieux"
-        options={{
-          title: "Lieux",
-          drawerIcon: ({ color }) => (
-            <IconSymbol name="mappin.and.ellipse" size={20} color={color} />
-          ),
-        }}
-      />
-      <Drawer.Screen
-        name="scan"
-        options={{
-          title: "Scan",
-          drawerIcon: ({ color }) => (
-            <IconSymbol name="barcode.viewfinder" size={20} color={color} />
-          ),
-        }}
-      />
-      <Drawer.Screen
-        name="articles-sync"
-        options={{
-          title: "Articles à synchroniser",
-          drawerIcon: ({ color }) => (
-            <IconSymbol
-              name="arrow.triangle.2.circlepath"
-              size={20}
-              color={color}
-            />
-          ),
-        }}
-      />
-      <Drawer.Screen
-        name="listes"
-        options={{
-          title: "Listes",
-          drawerIcon: ({ color }) => (
-            <IconSymbol
-              name="list.bullet.rectangle.fill"
-              size={20}
-              color={color}
-            />
-          ),
-        }}
-      />
-      <Drawer.Screen
-        name="recap"
-        options={{
-          title: "Récap",
-          drawerIcon: ({ color }) => (
-            <IconSymbol name="chart.bar.fill" size={20} color={color} />
-          ),
-        }}
-      />
-      <Drawer.Screen
-        name="history"
-        options={{
-          title: "Historique",
-          drawerIcon: ({ color }) => (
-            <IconSymbol name="clock.arrow.circlepath" size={20} color={color} />
-          ),
-        }}
-      />
+      >
+        <Drawer.Screen
+          name="index"
+          options={{
+            title: "Campagnes",
+            drawerIcon: ({ color }) => (
+              <IconSymbol name="folder.fill" size={20} color={color} />
+            ),
+          }}
+        />
+        <Drawer.Screen
+          name="groupes"
+          options={{
+            title: "Groupes",
+            drawerIcon: ({ color }) => (
+              <IconSymbol name="rectangle.stack.fill" size={20} color={color} />
+            ),
+          }}
+        />
+        <Drawer.Screen
+          name="lieux"
+          options={{
+            title: "Lieux",
+            drawerIcon: ({ color }) => (
+              <IconSymbol name="mappin.and.ellipse" size={20} color={color} />
+            ),
+          }}
+        />
+        <Drawer.Screen
+          name="scan"
+          options={{
+            title: "Scan",
+            drawerIcon: ({ color }) => (
+              <IconSymbol name="barcode.viewfinder" size={20} color={color} />
+            ),
+          }}
+        />
+        <Drawer.Screen
+          name="articles-sync"
+          options={{
+            title: "Articles à synchroniser",
+            drawerIcon: ({ color }) => (
+              <IconSymbol
+                name="arrow.triangle.2.circlepath"
+                size={20}
+                color={color}
+              />
+            ),
+          }}
+        />
+        <Drawer.Screen
+          name="listes"
+          options={{
+            title: "Listes",
+            drawerIcon: ({ color }) => (
+              <IconSymbol
+                name="list.bullet.rectangle.fill"
+                size={20}
+                color={color}
+              />
+            ),
+          }}
+        />
+        <Drawer.Screen
+          name="recap"
+          options={{
+            title: "Récap",
+            drawerIcon: ({ color }) => (
+              <IconSymbol name="chart.bar.fill" size={20} color={color} />
+            ),
+          }}
+        />
+        <Drawer.Screen
+          name="history"
+          options={{
+            title: "Historique",
+            drawerIcon: ({ color }) => (
+              <IconSymbol
+                name="clock.arrow.circlepath"
+                size={20}
+                color={color}
+              />
+            ),
+          }}
+        />
       </Drawer>
       {renderQuickLookupModal()}
     </>

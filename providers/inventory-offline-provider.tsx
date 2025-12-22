@@ -3,7 +3,6 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import { Platform, ToastAndroid } from "react-native";
@@ -343,7 +342,6 @@ export function InventoryOfflineProvider({
   const [syncError, setSyncError] = useState<string | null>(null);
   const [scanSyncError, setScanSyncError] = useState<string | null>(null);
   const { accessToken, isAuthenticated } = useAuth();
-  const lastSyncTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -538,24 +536,6 @@ export function InventoryOfflineProvider({
       setIsScanSyncing(false);
     }
   }, [accessToken, client, isAuthenticated]);
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      lastSyncTokenRef.current = null;
-      return;
-    }
-
-    if (!isHydrated || !accessToken) {
-      return;
-    }
-
-    if (lastSyncTokenRef.current === accessToken) {
-      return;
-    }
-
-    lastSyncTokenRef.current = accessToken;
-    void syncAll();
-  }, [accessToken, isAuthenticated, isHydrated, syncAll]);
 
   const contextValue = useMemo<InventoryOfflineContextValue>(
     () => ({

@@ -38,7 +38,7 @@ import {
 } from "@/components/ui/premium-theme";
 import { useComptageSession } from "@/hooks/use-comptage-session";
 import { useInventoryOffline } from "@/hooks/use-inventory-offline";
-import { useThemeColor } from "@/hooks/use-theme-color";
+
 import {
   type EnregistrementInventaireEtat,
   type OfflineArticleEntry,
@@ -400,82 +400,12 @@ export default function ScanScreen() {
     void loadScans();
   }, [loadScans]);
 
-  const borderColor = useThemeColor(
-    { light: "#E2E8F0", dark: "#2B2E35" },
-    "icon"
-  );
-  const surfaceColor = useThemeColor(
-    { light: "#FFFFFF", dark: "#1F232B" },
-    "background"
-  );
-  const highlightColor = useThemeColor(
-    { light: "#2563EB", dark: "#60A5FA" },
-    "tint"
-  );
-  const successBackgroundColor = useThemeColor(
-    { light: "#16A34A", dark: "#22C55E" },
-    "tint"
-  );
-  const warningBackgroundColor = useThemeColor(
-    { light: "#FBBF24", dark: "#F59E0B" },
-    "tint"
-  );
-  const manualActionColor = useThemeColor(
-    { light: "#F97316", dark: "#FB923C" },
-    "tint"
-  );
-  const mutedColor = useThemeColor(
-    { light: "#64748B", dark: "#94A3B8" },
-    "icon"
-  );
-  const textColor = useThemeColor({}, "text");
-  const inputTextColor = useThemeColor({}, "text");
-  const buttonTextColor = useThemeColor(
-    { light: "#FFFFFF", dark: "#0F172A" },
-    "text"
-  );
-  const missingBackgroundColor = useThemeColor(
-    { light: "#DC2626", dark: "#B91C1C" },
-    "tint"
-  );
-  const missingTextColor = "#FFFFFF";
-  const successTextColor = "#FFFFFF";
-  const warningTextColor = useThemeColor(
-    { light: "#1F2937", dark: "#0F172A" },
-    "text"
-  );
-  const placeholderColor = useThemeColor(
-    { light: "#94A3B8", dark: "#6B7280" },
-    "icon"
-  );
-  const modalCardColor = useThemeColor(
-    { light: "#FFFFFF", dark: "#1F232B" },
-    "background"
-  );
-  const modalOverlayColor = useThemeColor(
-    { light: "rgba(15, 23, 42, 0.55)", dark: "rgba(15, 23, 42, 0.75)" },
-    "background"
-  );
   const hasCameraPermission = cameraPermission?.granted ?? false;
   const canAskCameraPermission = cameraPermission?.canAskAgain ?? true;
   const isScanModalVisible = Boolean(scanDetail);
   const isScanBusy = isScanLocked || isSubmittingScan || isScanModalVisible;
   const isCameraButtonDisabled =
     !hasCameraPermission && !canAskCameraPermission;
-  const cameraButtonLabel = hasCameraPermission
-    ? isCameraActive
-      ? "Desactiver la camera"
-      : "Activer la camera"
-    : canAskCameraPermission
-    ? "Autoriser la camera"
-    : "Autorisation bloquee";
-  const cameraStatusMessage = hasCameraPermission
-    ? isCameraActive
-      ? "Mode scan actif."
-      : "Activez la camera pour scanner."
-    : canAskCameraPermission
-    ? "Autorisez la camera pour scanner."
-    : "Autorisation refusee. Activez-la dans les reglages.";
   const manualStatusMessage = "Ajoutez un article manuellement.";
   const manualGlowColor = "rgba(249,115,22,0.45)";
   const manualImageUris = useMemo(
@@ -688,7 +618,7 @@ export default function ScanScreen() {
     }
 
     if (!scanDetail.id) {
-      return !etatLoading;
+      return Boolean(selectedEtat) && !etatLoading;
     }
 
     return hasUpdate && !etatLoading;
@@ -1356,7 +1286,6 @@ export default function ScanScreen() {
       isSubmittingScan,
       locationArticleCodeSet,
       locationId,
-      session.location?.locationname,
       triggerSuccessHaptic,
     ]
   );
@@ -1575,6 +1504,9 @@ export default function ScanScreen() {
         setEtatMessage("Une image est requise pour l'article inconnu.");
         return;
       }
+    } else if (isDraft && !selectedEtat) {
+      setEtatMessage("Choisissez un etat.");
+      return;
     } else if (!isDraft && !selectedEtat && !shouldUpdate) {
       setEtatMessage("Choisissez un etat ou ajoutez une observation.");
       return;
@@ -1704,24 +1636,13 @@ export default function ScanScreen() {
     groupId,
     handleCloseScanModal,
     locationId,
-    scanDetail?.capturedAt,
-    scanDetail?.code,
-    scanDetail?.customDesc,
-    scanDetail?.description,
-    scanDetail?.id,
-    scanDetail?.articleId,
-    scanDetail?.imageUri,
-    scanDetail?.source,
-    scanDetail?.status,
-    scanDetail?.statusLabel,
+    scanDetail,
     observationValue,
     serialNumberValue,
     selectedEtat,
     session.location?.id,
     session.location?.locationname,
     articleLookup,
-    createInventoryScan,
-    updateInventoryScanDetails,
   ]);
   if (!campaignId || !groupId || !locationId) {
     return (
@@ -1835,7 +1756,7 @@ export default function ScanScreen() {
                   style={[
                     styles.scanModeButton,
                     {
-                      borderColor: manualActionColor,
+                      borderColor: PREMIUM_COLORS.accent_primary,
                       shadowColor: manualGlowColor,
                     },
                   ]}
@@ -1852,7 +1773,7 @@ export default function ScanScreen() {
                       <ThemedText
                         style={[
                           styles.scanModeButtonTitle,
-                          { color: manualActionColor },
+                          { color: PREMIUM_COLORS.text_primary },
                         ]}
                       >
                         Nouvel article manuel
@@ -1860,7 +1781,7 @@ export default function ScanScreen() {
                       <ThemedText
                         style={[
                           styles.scanModeButtonSubtitle,
-                          { color: manualActionColor },
+                          { color: PREMIUM_COLORS.text_muted },
                         ]}
                       >
                         {manualStatusMessage}
@@ -1889,13 +1810,10 @@ export default function ScanScreen() {
                   accessibilityLabel="Enregistrer le code article"
                 >
                   {isSubmittingScan ? (
-                    <ActivityIndicator color={buttonTextColor} size="small" />
+                    <ActivityIndicator color="#FFFFFF" size="small" />
                   ) : (
                     <ThemedText
-                      style={[
-                        styles.scanButtonText,
-                        { color: buttonTextColor },
-                      ]}
+                      style={[styles.scanButtonText, { color: "#FFFFFF" }]}
                     >
                       &gt;
                     </ThemedText>
@@ -1927,22 +1845,20 @@ export default function ScanScreen() {
                     <ThemedText style={styles.cameraHudTitle}>
                       Mode scan
                     </ThemedText>
-                    <ThemedText
-                      style={[styles.cameraHint, { color: mutedColor }]}
-                    >
+                    <ThemedText style={styles.cameraHint}>
                       Placez le code-barres dans le cadre pour le scanner.
                     </ThemedText>
                     <TouchableOpacity
                       style={[
                         styles.cameraCloseButton,
-                        { backgroundColor: highlightColor },
+                        { backgroundColor: PREMIUM_COLORS.glass_bg },
                       ]}
                       onPress={() => setIsCameraActive(false)}
                     >
                       <ThemedText
                         style={[
                           styles.cameraCloseButtonText,
-                          { color: buttonTextColor },
+                          { color: PREMIUM_COLORS.text_primary },
                         ]}
                       >
                         Fermer
@@ -1952,10 +1868,7 @@ export default function ScanScreen() {
                   {isScanBusy && cameraOverlayLabel ? (
                     <View style={styles.cameraOverlay}>
                       <ThemedText
-                        style={[
-                          styles.cameraOverlayText,
-                          { color: buttonTextColor },
-                        ]}
+                        style={[styles.cameraOverlayText, { color: "#FFFFFF" }]}
                       >
                         {cameraOverlayLabel}
                       </ThemedText>
@@ -1993,14 +1906,14 @@ export default function ScanScreen() {
                       <TouchableOpacity
                         style={[
                           styles.manualCaptureButton,
-                          { backgroundColor: manualActionColor },
+                          { backgroundColor: PREMIUM_COLORS.accent_primary },
                         ]}
                         onPress={handleManualCapture}
                       >
                         <ThemedText
                           style={[
                             styles.cameraCloseButtonText,
-                            { color: "#FFFFFF" },
+                            { color: PREMIUM_COLORS.text_primary },
                           ]}
                         >
                           Prendre photo
@@ -2010,7 +1923,7 @@ export default function ScanScreen() {
                         style={[
                           styles.manualContinueButton,
                           {
-                            backgroundColor: highlightColor,
+                            backgroundColor: PREMIUM_COLORS.success,
                             opacity: manualImageUri ? 1 : 0.6,
                           },
                         ]}
@@ -2020,7 +1933,7 @@ export default function ScanScreen() {
                         <ThemedText
                           style={[
                             styles.cameraCloseButtonText,
-                            { color: "#FFFFFF" },
+                            { color: PREMIUM_COLORS.text_primary },
                           ]}
                         >
                           Continuer
@@ -2030,14 +1943,14 @@ export default function ScanScreen() {
                     <TouchableOpacity
                       style={[
                         styles.cameraCloseButton,
-                        { backgroundColor: highlightColor },
+                        { backgroundColor: PREMIUM_COLORS.glass_bg },
                       ]}
                       onPress={handleManualCaptureClose}
                     >
                       <ThemedText
                         style={[
                           styles.cameraCloseButtonText,
-                          { color: buttonTextColor },
+                          { color: PREMIUM_COLORS.text_primary },
                         ]}
                       >
                         Fermer
@@ -2122,13 +2035,21 @@ export default function ScanScreen() {
               <View
                 style={[
                   styles.infoContainer,
-                  { backgroundColor: surfaceColor, borderColor },
+                  {
+                    backgroundColor: PREMIUM_COLORS.glass_bg,
+                    borderColor: PREMIUM_COLORS.glass_border,
+                  },
                 ]}
               >
                 <ThemedText style={styles.infoTitle}>
                   Code deja scanne
                 </ThemedText>
-                <ThemedText style={[styles.infoMessage, { color: mutedColor }]}>
+                <ThemedText
+                  style={[
+                    styles.infoMessage,
+                    { color: PREMIUM_COLORS.text_muted },
+                  ]}
+                >
                   {infoDisplay}
                 </ThemedText>
               </View>
@@ -2252,15 +2173,14 @@ export default function ScanScreen() {
               style={[
                 styles.modalCard,
                 {
-                  backgroundColor: modalCardColor,
                   borderColor:
                     scanDetail.status === "missing"
-                      ? missingBackgroundColor
+                      ? PREMIUM_COLORS.error
                       : scanDetail.status === "other"
-                      ? warningBackgroundColor
+                      ? PREMIUM_COLORS.warning
                       : scanDetail.status === "scanned"
-                      ? successBackgroundColor
-                      : borderColor,
+                      ? PREMIUM_COLORS.success
+                      : PREMIUM_COLORS.glass_border,
                 },
               ]}
               onPress={() => {}}
@@ -2271,7 +2191,11 @@ export default function ScanScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Fermer la fiche article"
               >
-                <IconSymbol name="xmark" size={16} color={mutedColor} />
+                <IconSymbol
+                  name="xmark"
+                  size={16}
+                  color={PREMIUM_COLORS.text_muted}
+                />
               </TouchableOpacity>
               <View style={styles.modalContent}>
                 <View
@@ -2280,12 +2204,12 @@ export default function ScanScreen() {
                     {
                       backgroundColor:
                         scanDetail.status === "missing"
-                          ? missingBackgroundColor
+                          ? "rgba(239, 68, 68, 0.15)"
                           : scanDetail.status === "other"
-                          ? warningBackgroundColor
+                          ? "rgba(245, 158, 11, 0.15)"
                           : scanDetail.status === "scanned"
-                          ? successBackgroundColor
-                          : borderColor,
+                          ? "rgba(16, 185, 129, 0.15)"
+                          : PREMIUM_COLORS.glass_bg,
                     },
                   ]}
                 >
@@ -2295,12 +2219,12 @@ export default function ScanScreen() {
                       {
                         color:
                           scanDetail.status === "missing"
-                            ? missingTextColor
+                            ? "#FCA5A5"
                             : scanDetail.status === "other"
-                            ? warningTextColor
+                            ? "#FCD34D"
                             : scanDetail.status === "scanned"
-                            ? successTextColor
-                            : mutedColor,
+                            ? "#6EE7B7"
+                            : PREMIUM_COLORS.text_muted,
                       },
                     ]}
                   >
@@ -2315,84 +2239,53 @@ export default function ScanScreen() {
                     {scanDetail.description}
                   </ThemedText>
                 ) : (
-                  <ThemedText
-                    style={[styles.modalDescription, { color: mutedColor }]}
-                  >
+                  <ThemedText style={styles.modalDescription}>
                     Description inconnue
                   </ThemedText>
                 )}
-                <ThemedText style={[styles.modalMeta, { color: mutedColor }]}>
-                  Scanne a {formatTimestamp(scanDetail.capturedAt)}
+                <ThemedText style={styles.modalMeta}>
+                  Scanné à {formatTimestamp(scanDetail.capturedAt)}
                 </ThemedText>
                 {scanDetail.alreadyScanned ? (
-                  <ThemedText
-                    style={[styles.alreadyScannedText, { color: mutedColor }]}
-                  >
-                    Deja scanne. Vous pouvez modifier l'etat ci-dessous.
+                  <ThemedText style={styles.alreadyScannedText}>
+                    Déjà scanné. Vous pouvez modifier l&apos;état ci-dessous.
                   </ThemedText>
                 ) : null}
                 {scanDetail.status === "missing" ? (
                   <View style={styles.modalField}>
-                    <ThemedText
-                      style={[styles.modalFieldLabel, { color: mutedColor }]}
-                    >
-                      Libelle court
+                    <ThemedText style={styles.modalFieldLabel}>
+                      Libellé court
                     </ThemedText>
                     <TextInput
-                      style={[
-                        styles.modalInput,
-                        {
-                          borderColor,
-                          color: inputTextColor,
-                          backgroundColor: surfaceColor,
-                        },
-                      ]}
+                      style={styles.modalInput}
                       placeholder="Saisir un libelle court"
-                      placeholderTextColor={placeholderColor}
+                      placeholderTextColor={PREMIUM_COLORS.text_muted}
                       value={customDescriptionValue}
                       onChangeText={handleCustomDescriptionChange}
                     />
                   </View>
                 ) : null}
                 <View style={styles.modalField}>
-                  <ThemedText
-                    style={[styles.modalFieldLabel, { color: mutedColor }]}
-                  >
+                  <ThemedText style={styles.modalFieldLabel}>
                     Observation
                   </ThemedText>
                   <TextInput
-                    style={[
-                      styles.modalInput,
-                      {
-                        borderColor,
-                        color: inputTextColor,
-                        backgroundColor: surfaceColor,
-                      },
-                    ]}
+                    style={styles.modalInput}
                     placeholder="Ajouter une observation"
-                    placeholderTextColor={placeholderColor}
+                    placeholderTextColor={PREMIUM_COLORS.text_muted}
                     value={observationValue}
                     onChangeText={handleObservationChange}
                     multiline
                   />
                 </View>
                 <View style={styles.modalField}>
-                  <ThemedText
-                    style={[styles.modalFieldLabel, { color: mutedColor }]}
-                  >
-                    Numero de serie (optionnel)
+                  <ThemedText style={styles.modalFieldLabel}>
+                    Numéro de série (optionnel)
                   </ThemedText>
                   <TextInput
-                    style={[
-                      styles.modalInput,
-                      {
-                        borderColor,
-                        color: inputTextColor,
-                        backgroundColor: surfaceColor,
-                      },
-                    ]}
-                    placeholder="Saisir un numero de serie"
-                    placeholderTextColor={placeholderColor}
+                    style={styles.modalInput}
+                    placeholder="Saisir un numéro de série"
+                    placeholderTextColor={PREMIUM_COLORS.text_muted}
                     value={serialNumberValue}
                     onChangeText={handleSerialNumberChange}
                     autoCapitalize="characters"
@@ -2409,9 +2302,9 @@ export default function ScanScreen() {
                           style={[
                             styles.etatOption,
                             {
-                              borderColor,
+                              borderColor: PREMIUM_COLORS.glass_border,
                               backgroundColor: isSelected
-                                ? "rgba(34,197,94,0.18)"
+                                ? "rgba(16, 185, 129, 0.15)"
                                 : "transparent",
                             },
                           ]}
@@ -2422,7 +2315,9 @@ export default function ScanScreen() {
                               style={[
                                 styles.etatOptionText,
                                 {
-                                  color: isSelected ? textColor : mutedColor,
+                                  color: isSelected
+                                    ? PREMIUM_COLORS.text_primary
+                                    : PREMIUM_COLORS.text_muted,
                                 },
                               ]}
                             >
@@ -2431,7 +2326,11 @@ export default function ScanScreen() {
                             <IconSymbol
                               name="checkmark.circle.fill"
                               size={22}
-                              color={isSelected ? "#22C55E" : "#94A3B8"}
+                              color={
+                                isSelected
+                                  ? PREMIUM_COLORS.success
+                                  : PREMIUM_COLORS.text_muted
+                              }
                             />
                           </View>
                         </TouchableOpacity>
@@ -2451,7 +2350,7 @@ export default function ScanScreen() {
                   <TouchableOpacity
                     style={[
                       styles.modalButtonSecondary,
-                      { borderColor: highlightColor },
+                      { borderColor: PREMIUM_COLORS.accent_primary },
                     ]}
                     onPress={handleCloseScanModal}
                     disabled={etatLoading}
@@ -2459,7 +2358,7 @@ export default function ScanScreen() {
                     <ThemedText
                       style={[
                         styles.modalButtonSecondaryText,
-                        { color: textColor },
+                        { color: PREMIUM_COLORS.text_primary },
                       ]}
                     >
                       Ne pas enregistrer
@@ -2469,7 +2368,7 @@ export default function ScanScreen() {
                     style={[
                       styles.modalButton,
                       {
-                        backgroundColor: highlightColor,
+                        backgroundColor: PREMIUM_COLORS.accent_primary,
                         opacity: canSubmitScanDetail ? 1 : 0.6,
                       },
                     ]}
@@ -2477,7 +2376,7 @@ export default function ScanScreen() {
                     disabled={!canSubmitScanDetail}
                   >
                     {etatLoading ? (
-                      <ActivityIndicator color={buttonTextColor} size="small" />
+                      <ActivityIndicator color="#FFFFFF" size="small" />
                     ) : (
                       <ThemedText style={styles.modalButtonText}>
                         Creer article temporaire
@@ -2490,7 +2389,7 @@ export default function ScanScreen() {
                   <TouchableOpacity
                     style={[
                       styles.modalButtonSecondary,
-                      { borderColor: highlightColor },
+                      { borderColor: PREMIUM_COLORS.glass_border },
                     ]}
                     onPress={handleCloseScanModal}
                     disabled={etatLoading}
@@ -2498,7 +2397,7 @@ export default function ScanScreen() {
                     <ThemedText
                       style={[
                         styles.modalButtonSecondaryText,
-                        { color: textColor },
+                        { color: PREMIUM_COLORS.text_primary },
                       ]}
                     >
                       Annuler
@@ -2508,7 +2407,7 @@ export default function ScanScreen() {
                     style={[
                       styles.modalButton,
                       {
-                        backgroundColor: highlightColor,
+                        backgroundColor: PREMIUM_COLORS.accent_primary,
                         opacity: canSubmitScanDetail ? 1 : 0.6,
                       },
                     ]}
@@ -2516,7 +2415,7 @@ export default function ScanScreen() {
                     disabled={!canSubmitScanDetail}
                   >
                     {etatLoading ? (
-                      <ActivityIndicator color={buttonTextColor} size="small" />
+                      <ActivityIndicator color="#FFFFFF" size="small" />
                     ) : (
                       <ThemedText style={styles.modalButtonText}>
                         Enregistrer et scanner suivant
@@ -2536,15 +2435,18 @@ export default function ScanScreen() {
         onRequestClose={handleManualCancel}
       >
         <Pressable
-          style={[styles.modalOverlay, { backgroundColor: modalOverlayColor }]}
+          style={[
+            styles.modalOverlay,
+            { backgroundColor: "rgba(15, 23, 42, 0.75)" },
+          ]}
           onPress={handleManualCancel}
         >
           <Pressable
             style={[
               styles.modalCard,
               {
-                backgroundColor: modalCardColor,
-                borderColor: manualActionColor,
+                backgroundColor: PREMIUM_COLORS.gradient_start,
+                borderColor: PREMIUM_COLORS.glass_border,
               },
             ]}
             onPress={() => {}}
@@ -2555,7 +2457,11 @@ export default function ScanScreen() {
               accessibilityRole="button"
               accessibilityLabel="Fermer le formulaire manuel"
             >
-              <IconSymbol name="xmark" size={16} color={mutedColor} />
+              <IconSymbol
+                name="xmark"
+                size={16}
+                color={PREMIUM_COLORS.text_muted}
+              />
             </TouchableOpacity>
             <ScrollView
               style={styles.manualFormScroll}
@@ -2587,65 +2493,38 @@ export default function ScanScreen() {
                 </View>
               ) : null}
               <View style={styles.modalField}>
-                <ThemedText
-                  style={[styles.modalFieldLabel, { color: mutedColor }]}
-                >
-                  Libelle court
+                <ThemedText style={styles.modalFieldLabel}>
+                  Libellé court
                 </ThemedText>
                 <TextInput
-                  style={[
-                    styles.modalInput,
-                    {
-                      borderColor,
-                      color: inputTextColor,
-                      backgroundColor: surfaceColor,
-                    },
-                  ]}
-                  placeholder="Ajouter un libelle court"
-                  placeholderTextColor={placeholderColor}
+                  style={styles.modalInput}
+                  placeholder="Ajouter un libellé court"
+                  placeholderTextColor={PREMIUM_COLORS.text_muted}
                   value={manualCustomDesc}
                   onChangeText={handleManualCustomDescChange}
                 />
               </View>
               <View style={styles.modalField}>
-                <ThemedText
-                  style={[styles.modalFieldLabel, { color: mutedColor }]}
-                >
+                <ThemedText style={styles.modalFieldLabel}>
                   Observation
                 </ThemedText>
                 <TextInput
-                  style={[
-                    styles.modalInput,
-                    {
-                      borderColor,
-                      color: inputTextColor,
-                      backgroundColor: surfaceColor,
-                    },
-                  ]}
+                  style={styles.modalInput}
                   placeholder="Ajouter une observation (optionnel)"
-                  placeholderTextColor={placeholderColor}
+                  placeholderTextColor={PREMIUM_COLORS.text_muted}
                   value={manualObservation}
                   onChangeText={handleManualObservationChange}
                   multiline
                 />
               </View>
               <View style={styles.modalField}>
-                <ThemedText
-                  style={[styles.modalFieldLabel, { color: mutedColor }]}
-                >
-                  Numero de serie
+                <ThemedText style={styles.modalFieldLabel}>
+                  Numéro de série
                 </ThemedText>
                 <TextInput
-                  style={[
-                    styles.modalInput,
-                    {
-                      borderColor,
-                      color: inputTextColor,
-                      backgroundColor: surfaceColor,
-                    },
-                  ]}
-                  placeholder="Saisir un numero de serie (optionnel)"
-                  placeholderTextColor={placeholderColor}
+                  style={styles.modalInput}
+                  placeholder="Saisir un numéro de série (optionnel)"
+                  placeholderTextColor={PREMIUM_COLORS.text_muted}
                   value={manualSerialNumber}
                   onChangeText={handleManualSerialNumberChange}
                   autoCapitalize="characters"
@@ -2662,9 +2541,9 @@ export default function ScanScreen() {
                         style={[
                           styles.etatOption,
                           {
-                            borderColor,
+                            borderColor: PREMIUM_COLORS.glass_border,
                             backgroundColor: isSelected
-                              ? "rgba(34,197,94,0.18)"
+                              ? "rgba(16, 185, 129, 0.15)"
                               : "transparent",
                           },
                         ]}
@@ -2675,7 +2554,9 @@ export default function ScanScreen() {
                             style={[
                               styles.etatOptionText,
                               {
-                                color: isSelected ? textColor : mutedColor,
+                                color: isSelected
+                                  ? PREMIUM_COLORS.text_primary
+                                  : PREMIUM_COLORS.text_muted,
                               },
                             ]}
                           >
@@ -2684,7 +2565,11 @@ export default function ScanScreen() {
                           <IconSymbol
                             name="checkmark.circle.fill"
                             size={22}
-                            color={isSelected ? "#22C55E" : "#94A3B8"}
+                            color={
+                              isSelected
+                                ? PREMIUM_COLORS.success
+                                : PREMIUM_COLORS.text_muted
+                            }
                           />
                         </View>
                       </TouchableOpacity>
@@ -2703,7 +2588,7 @@ export default function ScanScreen() {
               <TouchableOpacity
                 style={[
                   styles.modalButtonSecondary,
-                  { borderColor: highlightColor },
+                  { borderColor: PREMIUM_COLORS.accent_primary },
                 ]}
                 onPress={handleManualCancel}
                 disabled={isManualSaving}
@@ -2711,7 +2596,7 @@ export default function ScanScreen() {
                 <ThemedText
                   style={[
                     styles.modalButtonSecondaryText,
-                    { color: textColor },
+                    { color: PREMIUM_COLORS.text_primary },
                   ]}
                 >
                   Annuler
@@ -2721,7 +2606,7 @@ export default function ScanScreen() {
                 style={[
                   styles.modalButton,
                   {
-                    backgroundColor: highlightColor,
+                    backgroundColor: PREMIUM_COLORS.accent_primary,
                     opacity: isManualSaving ? 0.6 : 1,
                   },
                 ]}
@@ -2729,7 +2614,7 @@ export default function ScanScreen() {
                 disabled={isManualSaving}
               >
                 {isManualSaving ? (
-                  <ActivityIndicator color={buttonTextColor} size="small" />
+                  <ActivityIndicator color="#FFFFFF" size="small" />
                 ) : (
                   <ThemedText style={styles.modalButtonText}>
                     Enregistrer
