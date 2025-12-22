@@ -21,6 +21,7 @@ import {
   TextInput,
   ToastAndroid,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -74,16 +75,31 @@ const QUICK_LOOKUP_BARCODE_TYPES: BarcodeType[] = [
   "codabar",
 ];
 
+/** Drawer routes hidden from the navigation menu. */
+const HIDDEN_DRAWER_ROUTE_NAMES = new Set<string>([
+  "lieux/[parentId]",
+  "lieux/_location-level",
+  "ecart-positif",
+]);
+
+/** Minimum screen width for showing header action labels. */
+const HEADER_ACTION_TEXT_MIN_WIDTH = 600;
+
 /**
  * Mise en page du drawer qui expose l'écran d'accueil et l'action de déconnexion.
  * Utilise un design premium avec glassmorphism et dégradés.
  */
 export default function DrawerLayout() {
+  /** Current screen width for responsive header actions. */
+  const { width: screenWidth } = useWindowDimensions();
   const { clearAuthSession } = useAuth();
   const { isHydrated, isScanSyncing, isSyncing, syncScans } =
     useInventoryOffline();
   const router = useRouter();
   const shouldShowSyncIndicator = !isHydrated || isSyncing || isScanSyncing;
+  const shouldShowQuickLookup = true;
+  const shouldShowQuickLookupText = screenWidth >= HEADER_ACTION_TEXT_MIN_WIDTH;
+  const shouldShowSyncText = screenWidth >= HEADER_ACTION_TEXT_MIN_WIDTH;
   const [quickLookupCameraPermission, requestQuickLookupCameraPermission] =
     useCameraPermissions();
   const quickLookupScanLockRef = useRef(false);
@@ -295,16 +311,20 @@ export default function DrawerLayout() {
             <ActivityIndicator size="small" color={COLORS.accent_primary} />
           </View>
         )}
-        <TouchableOpacity
-          style={styles.quick_lookup_button}
-          onPress={handleOpenQuickLookup}
-          accessibilityRole="button"
-          accessibilityLabel="Consulter un article"
-          activeOpacity={0.8}
-        >
-          <IconSymbol name="eye" size={16} color={COLORS.text_primary} />
-          <Text style={styles.quick_lookup_text}>VOIR ARTICLE</Text>
-        </TouchableOpacity>
+        {shouldShowQuickLookup && (
+          <TouchableOpacity
+            style={styles.quick_lookup_button}
+            onPress={handleOpenQuickLookup}
+            accessibilityRole="button"
+            accessibilityLabel="Consulter un article"
+            activeOpacity={0.8}
+          >
+            <IconSymbol name="eye" size={16} color={COLORS.text_primary} />
+            {shouldShowQuickLookupText && (
+              <Text style={styles.quick_lookup_text}>VOIR ARTICLE</Text>
+            )}
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={[
             styles.sync_button,
@@ -331,11 +351,13 @@ export default function DrawerLayout() {
               size={14}
               color={COLORS.text_primary}
             />
-            <Text style={styles.sync_button_text}>
-              {isScanSyncing
-                ? "T\u00e9l\u00e9chargement..."
-                : "T\u00e9l\u00e9charger sur le serveur"}
-            </Text>
+            {shouldShowSyncText && (
+              <Text style={styles.sync_button_text}>
+                {isScanSyncing
+                  ? "T\u00e9l\u00e9chargement..."
+                  : "T\u00e9l\u00e9charger sur le serveur"}
+              </Text>
+            )}
           </LinearGradient>
         </TouchableOpacity>
       </View>
@@ -344,6 +366,9 @@ export default function DrawerLayout() {
     handleOpenQuickLookup,
     handleSyncScans,
     isScanSyncing,
+    shouldShowQuickLookup,
+    shouldShowQuickLookupText,
+    shouldShowSyncText,
     shouldShowSyncIndicator,
   ]);
   /** Render the quick article lookup modal overlay. */
@@ -505,7 +530,22 @@ export default function DrawerLayout() {
 
   /** Rend le contenu du drawer avec une action de déconnexion explicite. */
   const renderDrawerContent = useCallback(
-    (props: DrawerContentComponentProps) => (
+    (props: DrawerContentComponentProps) => {
+      const visibleRoutes = props.state.routes.filter(
+        (route) => !HIDDEN_DRAWER_ROUTE_NAMES.has(route.name)
+      );
+      const activeRouteName =
+        props.state.routes[props.state.index]?.name ?? null;
+      const activeIndex = visibleRoutes.findIndex(
+        (route) => route.name === activeRouteName
+      );
+      const drawerState = {
+        ...props.state,
+        routes: visibleRoutes,
+        index: activeIndex >= 0 ? activeIndex : 0,
+      };
+
+      return (
       <View style={styles.drawer_container}>
         <LinearGradient
           colors={[
@@ -548,7 +588,7 @@ export default function DrawerLayout() {
           {...props}
           contentContainerStyle={styles.drawer_scroll_content}
         >
-          <DrawerItemList {...props} />
+          <DrawerItemList {...props} state={drawerState} />
 
           {/* Séparateur avant déconnexion */}
           <View style={styles.drawer_logout_separator} />
@@ -575,7 +615,8 @@ export default function DrawerLayout() {
           </Text>
         </View>
       </View>
-    ),
+    );
+    },
     [handleLogout]
   );
 

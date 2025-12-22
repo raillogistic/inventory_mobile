@@ -4,4 +4,7 @@ eas build -p android --profile preview
 
 
 
-npx expo run:android
+
+npx expo prebuild
+cd android
+./gradlew assembleDebug

@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "mobile",
+    "name": "rail inventaire",
     "slug": "mobile",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "mobile",
@@ -11,7 +11,10 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "Cette application a besoin de la camera pour scanner les codes-barres."
+        "NSCameraUsageDescription": "Cette application a besoin de la camera pour scanner les codes-barres.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       }
     },
     "android": {
@@ -22,7 +25,11 @@
         "backgroundImage": "./assets/images/icon.png",
         "monochromeImage": "./assets/images/icon.png"
       },
-      "permissions": ["CAMERA"],
+      "permissions": [
+        "CAMERA",
+        "INTERNET"
+      ],
+      "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.milkhaled.mobile"
@@ -33,6 +40,21 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          },
+          "ios": {
+            "infoPlist": {
+              "NSAppTransportSecurity": {
+                "NSAllowsArbitraryLoads": true
+              }
+            }
+          }
+        }
+      ],
       [
         "expo-splash-screen",
         {

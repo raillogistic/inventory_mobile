@@ -1,4 +1,10 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -258,18 +264,22 @@ function CampagneListItem({
 export default function CampaignSelectionScreen() {
   const router = useRouter();
   const { session, setCampaign } = useComptageSession();
-  const { cache, isHydrated, isSyncing, syncError, syncAll } =
+  const { cache, metadata, isHydrated, isSyncing, syncError, syncAll } =
     useInventoryOffline();
   const [searchText, setSearchText] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const selectedCampaignId = session.campaign?.id ?? null;
+  const autoSyncAttemptedRef = useRef(false);
 
   const campaigns = useMemo(
     () => filterCampaigns(cache.campaigns, searchText),
     [cache.campaigns, searchText]
   );
   const hasCampaigns = cache.campaigns.length > 0;
-  const isLoading = !isHydrated || (isSyncing && !hasCampaigns);
+  const isInitialSyncNeeded =
+    isHydrated && !hasCampaigns && !metadata.lastSyncAt && !syncError;
+  const isLoading =
+    !isHydrated || (isSyncing && !hasCampaigns) || isInitialSyncNeeded;
   const errorMessage = syncError;
 
   /** Met à jour la requête de recherche pour filtrer les campagnes. */
@@ -320,9 +330,23 @@ export default function CampaignSelectionScreen() {
     isLoading && campaigns.length === 0 && !isRefreshing;
   const showInlineError = Boolean(errorMessage && campaigns.length > 0);
 
+  /**
+   * Lance une synchronisation automatique lors du premier affichage sans cache.
+   */
+  useEffect(() => {
+    if (autoSyncAttemptedRef.current) {
+      return;
+    }
+    if (!isInitialSyncNeeded || isSyncing) {
+      return;
+    }
+    autoSyncAttemptedRef.current = true;
+    void syncAll();
+  }, [isInitialSyncNeeded, isSyncing, syncAll]);
+
   /** Rend l'en-tête de la liste avec recherche et contexte de sélection. */
-  const renderHeader = useCallback(() => {
-    return (
+  const headerElement = useMemo(
+    () => (
       <View style={styles.header_section}>
         {/* Carte d'en-tête glassmorphism */}
         <BlurView intensity={15} tint="dark" style={styles.header_blur}>
@@ -447,17 +471,18 @@ export default function CampaignSelectionScreen() {
           </Text>
         </View>
       </View>
-    );
-  }, [
-    campaigns.length,
-    errorMessage,
-    handleRetry,
-    handleSearchChange,
-    searchText,
-    selectedCampaignId,
-    session.campaign,
-    showInlineError,
-  ]);
+    ),
+    [
+      campaigns.length,
+      errorMessage,
+      handleRetry,
+      handleSearchChange,
+      searchText,
+      selectedCampaignId,
+      session.campaign,
+      showInlineError,
+    ]
+  );
 
   /** Rend l'état vide/chargement pour la liste des campagnes. */
   const renderEmptyComponent = useCallback(() => {
@@ -575,12 +600,13 @@ export default function CampaignSelectionScreen() {
         data={campaigns}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
-        ListHeaderComponent={renderHeader}
+        ListHeaderComponent={headerElement}
         ListEmptyComponent={renderEmptyComponent}
         contentContainerStyle={styles.list_content}
         showsVerticalScrollIndicator={false}
         refreshing={isRefreshing}
         onRefresh={handleRefresh}
+        keyboardShouldPersistTaps="handled"
         alwaysBounceVertical
       />
     </View>

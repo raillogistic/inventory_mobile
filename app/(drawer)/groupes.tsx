@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
   BackHandler,
   FlatList,
+  InteractionManager,
   Modal,
   Pressable,
   StyleSheet,
@@ -92,6 +93,8 @@ type PinCodeInputProps = {
   onChange: (value: string) => void;
   /** Ref de l'input pour le focus */
   inputRef: React.RefObject<TextInput>;
+  /** Active le focus automatique si necessaire. */
+  autoFocus?: boolean;
 };
 
 /**
@@ -102,6 +105,7 @@ function PinCodeInput({
   length,
   onChange,
   inputRef,
+  autoFocus = false,
 }: PinCodeInputProps) {
   /** Normalise les valeurs entrantes. */
   const handleChangeText = useCallback(
@@ -120,7 +124,7 @@ function PinCodeInput({
   return (
     <Pressable
       style={styles.pin_container}
-      onPress={handleFocusRequest}
+      onPressIn={handleFocusRequest}
       accessibilityRole="button"
       accessibilityLabel="Saisir le code PIN"
     >
@@ -128,9 +132,11 @@ function PinCodeInput({
         ref={inputRef}
         value={value}
         onChangeText={handleChangeText}
-        keyboardType="number-pad"
+        keyboardType="numeric"
+        inputMode="numeric"
+        showSoftInputOnFocus
         maxLength={length}
-        autoFocus={false}
+        autoFocus={autoFocus}
         caretHidden
         style={styles.hidden_input}
       />
@@ -234,6 +240,198 @@ function GroupeListItem({ group, isSelected, onSelect }: GroupeListItemProps) {
         )}
       </View>
     </TouchableOpacity>
+  );
+}
+
+
+/**
+ * Props for the group list header.
+ */
+type GroupListHeaderProps = {
+  /** Number of available groups. */
+  groupCount: number;
+  /** Selected group id. */
+  selectedGroupId: string | null;
+  /** Selected campaign name. */
+  campaignName: string | null | undefined;
+  /** Selected campaign code. */
+  campaignCode: string | null | undefined;
+  /** Selected group name. */
+  selectedGroupName: string | null | undefined;
+  /** Search input value. */
+  searchText: string;
+  /** Callback when search value changes. */
+  onSearchChange: (value: string) => void;
+  /** Callback to clear search. */
+  onClearSearch: () => void;
+  /** Callback to change campaign. */
+  onChangeCampaign: () => void;
+  /** Callback to continue to locations. */
+  onContinueToLocations: () => void;
+  /** Whether to show inline error. */
+  showInlineError: boolean;
+  /** Inline error message. */
+  errorMessage: string | null;
+  /** Callback to retry sync. */
+  onRetry: () => void;
+};
+
+/**
+ * Header for the group list with search and context.
+ */
+function GroupListHeader({
+  groupCount,
+  selectedGroupId,
+  campaignName,
+  campaignCode,
+  selectedGroupName,
+  searchText,
+  onSearchChange,
+  onClearSearch,
+  onChangeCampaign,
+  onContinueToLocations,
+  showInlineError,
+  errorMessage,
+  onRetry,
+}: GroupListHeaderProps) {
+  return (
+    <View style={styles.header_section}>
+      <BlurView intensity={20} tint="dark" style={styles.header_blur}>
+        <View style={styles.header_card}>
+          <View style={styles.header_row}>
+            <View style={styles.header_icon}>
+              <IconSymbol
+                name="person.2.fill"
+                size={24}
+                color={PREMIUM_COLORS.accent_primary}
+              />
+            </View>
+            <View style={styles.header_text}>
+              <Text style={styles.header_title}>Groupes</Text>
+              <Text style={styles.header_subtitle}>
+                {groupCount} groupe(s) disponible(s)
+              </Text>
+            </View>
+          </View>
+
+          <LinearGradient
+            colors={[
+              "transparent",
+              PREMIUM_COLORS.accent_primary,
+              "transparent",
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.separator}
+          />
+
+          {/* Campagne s??lectionn??e */}
+          <View style={styles.campaign_banner}>
+            <View style={styles.campaign_info}>
+              <View style={styles.campaign_icon}>
+                <IconSymbol
+                  name="folder.fill"
+                  size={16}
+                  color={PREMIUM_COLORS.accent_primary}
+                />
+              </View>
+              <View style={styles.campaign_text}>
+                <Text style={styles.campaign_name}>{campaignName}</Text>
+                <Text style={styles.campaign_code}>
+                  Code: {campaignCode}
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={styles.change_button}
+              onPress={onChangeCampaign}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.change_button_text}>Changer</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Recherche */}
+          <View style={styles.search_container}>
+            <IconSymbol
+              name="magnifyingglass"
+              size={18}
+              color={PREMIUM_COLORS.text_muted}
+            />
+            <TextInput
+              style={styles.search_input}
+              placeholder="Rechercher un groupe..."
+              placeholderTextColor={PREMIUM_COLORS.text_muted}
+              value={searchText}
+              onChangeText={onSearchChange}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+            />
+            {searchText.length > 0 && (
+              <TouchableOpacity onPress={onClearSearch}>
+                <View style={styles.clear_button}>
+                  <IconSymbol
+                    name="xmark"
+                    size={12}
+                    color={PREMIUM_COLORS.text_primary}
+                  />
+                </View>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Groupe s??lectionn?? */}
+          {selectedGroupId && (
+            <TouchableOpacity
+              style={styles.selected_banner}
+              onPress={onContinueToLocations}
+              activeOpacity={0.7}
+            >
+              <View style={styles.selected_banner_content}>
+                <IconSymbol
+                  name="checkmark.seal.fill"
+                  size={20}
+                  color={PREMIUM_COLORS.success}
+                />
+                <View style={styles.selected_banner_text}>
+                  <Text style={styles.selected_banner_title}>Groupe actif</Text>
+                  <Text style={styles.selected_banner_name}>
+                    {selectedGroupName}
+                  </Text>
+                </View>
+              </View>
+              <IconSymbol
+                name="chevron.right"
+                size={16}
+                color={PREMIUM_COLORS.text_muted}
+              />
+            </TouchableOpacity>
+          )}
+
+          {/* Erreur inline */}
+          {showInlineError && (
+            <View style={styles.error_container}>
+              <IconSymbol
+                name="exclamationmark.triangle.fill"
+                size={18}
+                color={PREMIUM_COLORS.error}
+              />
+              <View style={styles.error_content}>
+                <Text style={styles.error_title}>Erreur de chargement</Text>
+                <Text style={styles.error_message}>{errorMessage}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.retry_small_button}
+                onPress={onRetry}
+              >
+                <Text style={styles.retry_small_text}>R??essayer</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </BlurView>
+    </View>
   );
 }
 
@@ -349,18 +547,12 @@ export default function GroupSelectionScreen() {
     setPinError(null);
   }, []);
 
-  /** Focus le PIN après ouverture du modal. */
-  useEffect(() => {
-    if (!pinPromptGroup) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
+  /** Focus le PIN des que le modal est affiche. */
+  const handlePinModalShow = useCallback(() => {
+    InteractionManager.runAfterInteractions(() => {
       pinInputRef.current?.focus();
-    }, 100);
-
-    return () => clearTimeout(timer);
-  }, [pinPromptGroup]);
+    });
+  }, []);
 
   /** Valide le PIN et navigue vers les lieux. */
   const handleConfirmPin = useCallback(
@@ -431,164 +623,40 @@ export default function GroupSelectionScreen() {
   const showInlineError = Boolean(errorMessage && groups.length > 0);
 
   /** Rend l'en-tête de la liste. */
-  const renderHeader = useCallback(() => {
-    return (
-      <View style={styles.header_section}>
-        <BlurView intensity={20} tint="dark" style={styles.header_blur}>
-          <View style={styles.header_card}>
-            <View style={styles.header_row}>
-              <View style={styles.header_icon}>
-                <IconSymbol
-                  name="person.2.fill"
-                  size={24}
-                  color={PREMIUM_COLORS.accent_primary}
-                />
-              </View>
-              <View style={styles.header_text}>
-                <Text style={styles.header_title}>Groupes</Text>
-                <Text style={styles.header_subtitle}>
-                  {groups.length} groupe(s) disponible(s)
-                </Text>
-              </View>
-            </View>
-
-            <LinearGradient
-              colors={[
-                "transparent",
-                PREMIUM_COLORS.accent_primary,
-                "transparent",
-              ]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.separator}
-            />
-
-            {/* Campagne sélectionnée */}
-            <View style={styles.campaign_banner}>
-              <View style={styles.campaign_info}>
-                <View style={styles.campaign_icon}>
-                  <IconSymbol
-                    name="folder.fill"
-                    size={16}
-                    color={PREMIUM_COLORS.accent_primary}
-                  />
-                </View>
-                <View style={styles.campaign_text}>
-                  <Text style={styles.campaign_name}>
-                    {session.campaign?.nom}
-                  </Text>
-                  <Text style={styles.campaign_code}>
-                    Code: {session.campaign?.code_campagne}
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                style={styles.change_button}
-                onPress={handleChangeCampaign}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.change_button_text}>Changer</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Recherche */}
-            <View style={styles.search_container}>
-              <IconSymbol
-                name="magnifyingglass"
-                size={18}
-                color={PREMIUM_COLORS.text_muted}
-              />
-              <TextInput
-                style={styles.search_input}
-                placeholder="Rechercher un groupe..."
-                placeholderTextColor={PREMIUM_COLORS.text_muted}
-                value={searchText}
-                onChangeText={handleSearchChange}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              {searchText.length > 0 && (
-                <TouchableOpacity onPress={handleClearSearch}>
-                  <View style={styles.clear_button}>
-                    <IconSymbol
-                      name="xmark"
-                      size={12}
-                      color={PREMIUM_COLORS.text_primary}
-                    />
-                  </View>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* Groupe sélectionné */}
-            {selectedGroupId && (
-              <TouchableOpacity
-                style={styles.selected_banner}
-                onPress={handleContinueToLocations}
-                activeOpacity={0.7}
-              >
-                <View style={styles.selected_banner_content}>
-                  <IconSymbol
-                    name="checkmark.seal.fill"
-                    size={20}
-                    color={PREMIUM_COLORS.success}
-                  />
-                  <View style={styles.selected_banner_text}>
-                    <Text style={styles.selected_banner_title}>
-                      Groupe actif
-                    </Text>
-                    <Text style={styles.selected_banner_name}>
-                      {session.group?.nom}
-                    </Text>
-                  </View>
-                </View>
-                <IconSymbol
-                  name="chevron.right"
-                  size={16}
-                  color={PREMIUM_COLORS.text_muted}
-                />
-              </TouchableOpacity>
-            )}
-
-            {/* Erreur inline */}
-            {showInlineError && (
-              <View style={styles.error_container}>
-                <IconSymbol
-                  name="exclamationmark.triangle.fill"
-                  size={18}
-                  color={PREMIUM_COLORS.error}
-                />
-                <View style={styles.error_content}>
-                  <Text style={styles.error_title}>Erreur de chargement</Text>
-                  <Text style={styles.error_message}>{errorMessage}</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.retry_small_button}
-                  onPress={handleRetry}
-                >
-                  <Text style={styles.retry_small_text}>Réessayer</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        </BlurView>
-      </View>
-    );
-  }, [
-    groups.length,
-    session.campaign?.nom,
-    session.campaign?.code_campagne,
-    session.group?.nom,
-    searchText,
-    selectedGroupId,
-    showInlineError,
-    errorMessage,
-    handleChangeCampaign,
-    handleSearchChange,
-    handleClearSearch,
-    handleContinueToLocations,
-    handleRetry,
-  ]);
+  const headerElement = useMemo(
+    () => (
+      <GroupListHeader
+        groupCount={groups.length}
+        selectedGroupId={selectedGroupId}
+        campaignName={session.campaign?.nom}
+        campaignCode={session.campaign?.code_campagne}
+        selectedGroupName={session.group?.nom}
+        searchText={searchText}
+        onSearchChange={handleSearchChange}
+        onClearSearch={handleClearSearch}
+        onChangeCampaign={handleChangeCampaign}
+        onContinueToLocations={handleContinueToLocations}
+        showInlineError={showInlineError}
+        errorMessage={errorMessage}
+        onRetry={handleRetry}
+      />
+    ),
+    [
+      errorMessage,
+      groups.length,
+      handleChangeCampaign,
+      handleClearSearch,
+      handleContinueToLocations,
+      handleRetry,
+      handleSearchChange,
+      searchText,
+      selectedGroupId,
+      session.campaign?.code_campagne,
+      session.campaign?.nom,
+      session.group?.nom,
+      showInlineError,
+    ]
+  );
 
   /** Rend l'état vide/chargement. */
   const renderEmptyComponent = useCallback(() => {
@@ -706,12 +774,13 @@ export default function GroupSelectionScreen() {
         data={groups}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
-        ListHeaderComponent={renderHeader}
+        ListHeaderComponent={headerElement}
         ListEmptyComponent={renderEmptyComponent}
         contentContainerStyle={styles.list_content}
         showsVerticalScrollIndicator={false}
         refreshing={isRefreshing}
         onRefresh={handleRefresh}
+        keyboardShouldPersistTaps="handled"
         alwaysBounceVertical
       />
 
@@ -720,10 +789,14 @@ export default function GroupSelectionScreen() {
         transparent
         visible={Boolean(pinPromptGroup)}
         animationType="fade"
+        onShow={handlePinModalShow}
         onRequestClose={handleClosePinPrompt}
       >
         <Pressable style={styles.modal_overlay} onPress={handleClosePinPrompt}>
-          <Pressable style={styles.modal_card} onPress={() => {}}>
+          <Pressable
+            style={styles.modal_card}
+            onPress={(event) => event.stopPropagation()}
+          >
             {/* Bouton fermer */}
             <TouchableOpacity
               style={styles.modal_close}
@@ -756,6 +829,7 @@ export default function GroupSelectionScreen() {
                 length={PIN_LENGTH}
                 onChange={handlePinChange}
                 inputRef={pinInputRef}
+                autoFocus
               />
 
               {pinError && (
@@ -1226,9 +1300,12 @@ const styles = StyleSheet.create({
   },
   hidden_input: {
     position: "absolute",
-    width: 1,
-    height: 1,
-    opacity: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    opacity: 0.01,
+    zIndex: 1,
   },
   pin_box_row: {
     flexDirection: "row",

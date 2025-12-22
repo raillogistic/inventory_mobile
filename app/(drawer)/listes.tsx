@@ -84,7 +84,9 @@ function filterArticlesByQuery(
   query: string
 ): OfflineArticleEntry[] {
   const normalized = normalizeSearchValue(query);
-  return articles.filter((article) => matchesArticleSearch(article, normalized));
+  return articles.filter((article) =>
+    matchesArticleSearch(article, normalized)
+  );
 }
 
 /**
@@ -232,7 +234,7 @@ export default function ListesScreen() {
   const renderSection = useCallback(
     ({ item }: { item: LocationSection }) => {
       const isExpanded = expandedLocations.has(item.id);
-      return (
+      () => (
         <View style={styles.section_block}>
           <TouchableOpacity
             style={styles.section_header}
@@ -272,8 +274,8 @@ export default function ListesScreen() {
   );
 
   /** Rend l'en-t?te de la liste. */
-  const renderHeader = useCallback(() => {
-    return (
+  const headerElement = useMemo(
+    () => (
       <View style={styles.header_section}>
         <BlurView intensity={20} tint="dark" style={styles.header_blur}>
           <View style={styles.header_card}>
@@ -388,16 +390,17 @@ export default function ListesScreen() {
           </View>
         </BlurView>
       </View>
-    );
-  }, [
-    handleRefresh,
-    handleSearchChange,
-    handleSearchSubmit,
-    isRefreshing,
-    sections.length,
-    syncError,
-    visibleArticleCount,
-  ]);
+    ),
+    [
+      handleRefresh,
+      handleSearchChange,
+      handleSearchSubmit,
+      isRefreshing,
+      sections.length,
+      syncError,
+      visibleArticleCount,
+    ]
+  );
 
   /** Rend l'?tat vide ou de chargement. */
   const renderEmpty = useCallback(() => {
@@ -466,10 +469,11 @@ export default function ListesScreen() {
           keyExtractor={(item) => item.id}
           renderItem={renderSection}
           renderSectionHeader={() => null}
-          ListHeaderComponent={renderHeader}
+          ListHeaderComponent={headerElement}
           ListEmptyComponent={renderEmpty}
           contentContainerStyle={styles.list_content}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
           stickySectionHeadersEnabled={false}
           refreshing={isRefreshing}
           onRefresh={handleRefresh}

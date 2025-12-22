@@ -363,6 +363,7 @@ export function LocationLevelScreen({
   const renderItem = useCallback(
     ({ item }: { item: Location }) => {
       const hasChildren = parentIds.has(item.id);
+
       return (
         <LocationListItem
           location={item}
@@ -457,8 +458,8 @@ export function LocationLevelScreen({
   }
 
   /** Rend l'en-tête de la liste. */
-  const renderHeader = () => {
-    return (
+  const headerElement = useMemo(
+    () => (
       <View style={styles.header_section}>
         <BlurView intensity={20} tint="dark" style={styles.header_blur}>
           <View style={styles.header_card}>
@@ -652,8 +653,26 @@ export function LocationLevelScreen({
           </View>
         </BlurView>
       </View>
-    );
-  };
+    ),
+    [
+      barcodeText,
+      errorMessage,
+      handleBarcodeChange,
+      handleChangeGroup,
+      handleClearBarcode,
+      handleClearSearch,
+      handleGoBack,
+      handleRetry,
+      handleSearchChange,
+      handleStartScan,
+      locations.length,
+      parentLocation,
+      parentTrail,
+      searchText,
+      session.group?.nom,
+      showInlineError,
+    ]
+  );
 
   /** Rend l'état vide/chargement. */
   const renderEmptyComponent = () => {
@@ -732,16 +751,24 @@ export function LocationLevelScreen({
         data={locations}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
-        ListHeaderComponent={renderHeader}
+        ListHeaderComponent={headerElement}
         ListEmptyComponent={renderEmptyComponent}
         contentContainerStyle={styles.list_content}
         showsVerticalScrollIndicator={false}
         refreshing={isRefreshing}
         onRefresh={handleRefresh}
+        keyboardShouldPersistTaps="handled"
         alwaysBounceVertical
       />
     </PremiumScreenWrapper>
   );
+}
+
+/**
+ * Default route wrapper for Expo Router.
+ */
+export default function LocationLevelRoute() {
+  return <LocationLevelScreen parentLocation={null} parentTrail={[]} />;
 }
 
 /**

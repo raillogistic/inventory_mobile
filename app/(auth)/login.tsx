@@ -109,12 +109,24 @@ type TokenAuthResponse = {
   errors?: { message: string }[];
 };
 
+/**
+ * Details for an auth endpoint error.
+ */
+type AuthErrorDetails = {
+  /** URL used for the auth request. */
+  url: string;
+  /** Raw error detail from the backend or network. */
+  detail: string;
+};
+
 /** Résultat de la vérification de disponibilité de l'endpoint. */
 type EndpointCheckResult = {
   /** Si l'endpoint a répondu avec succès. */
   ok: boolean;
   /** Message d'erreur optionnel pour l'utilisateur. */
   message?: string;
+  /** Details for troubleshooting. */
+  details?: AuthErrorDetails;
 };
 
 /**
@@ -128,6 +140,23 @@ function getErrorMessage(error: unknown): string {
   }
   return "Connexion impossible. Veuillez réessayer.";
 }
+
+/**
+ * Build auth error details for display.
+ * @param authUrl - Auth endpoint URL.
+ * @param error - Raw error object.
+ * @returns Auth error details payload.
+ */
+function buildAuthErrorDetails(
+  authUrl: string,
+  error: unknown
+): AuthErrorDetails {
+  return {
+    url: authUrl,
+    detail: getErrorMessage(error),
+  };
+}
+
 
 /**
  * Demande un jeton d'authentification au backend.
@@ -182,6 +211,10 @@ async function checkAuthEndpoint(url: string): Promise<EndpointCheckResult> {
       return {
         ok: false,
         message: "Le serveur d'authentification ne répond pas.",
+        details: {
+          url,
+          detail: `HTTP status ${response.status}.`,
+        },
       };
     }
 
@@ -191,6 +224,7 @@ async function checkAuthEndpoint(url: string): Promise<EndpointCheckResult> {
     return {
       ok: false,
       message: "Impossible de joindre le serveur. Vérifiez l'hôte et le port.",
+      details: buildAuthErrorDetails(url, error),
     };
   } finally {
     clearTimeout(timeoutId);
@@ -427,6 +461,8 @@ export default function LoginScreen() {
     password: "",
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<AuthErrorDetails | null>(null);
+  const [isErrorDetailsVisible, setIsErrorDetailsVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
 
@@ -511,6 +547,20 @@ export default function LoginScreen() {
     ]).start();
   }, [errorShake]);
 
+  /** Reset the error details state. */
+  const resetErrorDetails = useCallback(() => {
+    setErrorDetails(null);
+    setIsErrorDetailsVisible(false);
+  }, []);
+
+  /** Toggle the visibility of detailed error information. */
+  const handleToggleErrorDetails = useCallback(() => {
+    if (!errorDetails) {
+      return;
+    }
+    setIsErrorDetailsVisible((current) => !current);
+  }, [errorDetails]);
+
   /** Met à jour le champ nom d'utilisateur. */
   const handleUsernameChange = useCallback((value: string) => {
     setFormState((current) => ({ ...current, username: value }));
@@ -532,11 +582,13 @@ export default function LoginScreen() {
 
     if (!trimmedUsername || !formState.password) {
       setErrorMessage("Le nom d'utilisateur et le mot de passe sont requis.");
+      resetErrorDetails();
       triggerErrorShake();
       return;
     }
 
     setErrorMessage(null);
+    resetErrorDetails();
 
     const endpointStatus = await checkAuthEndpoint(authUrl);
     if (!endpointStatus.ok) {
@@ -544,6 +596,15 @@ export default function LoginScreen() {
         endpointStatus.message ??
           "Le serveur d'authentification est inaccessible."
       );
+      setErrorDetails(
+        endpointStatus.details ?? {
+          url: authUrl,
+          detail:
+            endpointStatus.message ??
+            "Le serveur d'authentification est inaccessible.",
+        }
+      );
+      setIsErrorDetailsVisible(false);
       triggerErrorShake();
       return;
     }
@@ -570,7 +631,10 @@ export default function LoginScreen() {
         user: null,
       });
     } catch (error) {
-      setErrorMessage(getErrorMessage(error));
+      const message = getErrorMessage(error);
+      setErrorMessage(message);
+      setErrorDetails(buildAuthErrorDetails(authUrl, error));
+      setIsErrorDetailsVisible(false);
       triggerErrorShake();
     } finally {
       setIsSubmitting(false);
@@ -579,6 +643,7 @@ export default function LoginScreen() {
     authUrl,
     formState.password,
     formState.username,
+    resetErrorDetails,
     setAuthSession,
     triggerErrorShake,
   ]);
@@ -587,6 +652,8 @@ export default function LoginScreen() {
     () => isSubmitting || !formState.username.trim() || !formState.password,
     [formState.password, formState.username, isSubmitting]
   );
+  const isErrorDetailsAvailable = Boolean(errorDetails);
+
 
   return (
     <View style={styles.screen}>
@@ -767,14 +834,50 @@ export default function LoginScreen() {
 
                   {/* Message d'erreur */}
                   {errorMessage && (
-                    <View style={styles.error_container}>
+                    <TouchableOpacity
+                      style={styles.error_container}
+                      onPress={handleToggleErrorDetails}
+                      disabled={!isErrorDetailsAvailable}
+                      accessibilityRole={
+                        isErrorDetailsAvailable ? "button" : undefined
+                      }
+                      accessibilityLabel={
+                        isErrorDetailsAvailable
+                          ? isErrorDetailsVisible
+                            ? "Masquer les details de l'erreur"
+                            : "Afficher les details de l'erreur"
+                          : undefined
+                      }
+                      activeOpacity={isErrorDetailsAvailable ? 0.7 : 1}
+                    >
                       <IconSymbol
                         name="exclamationmark.triangle.fill"
                         size={16}
                         color={COLORS.error}
                       />
-                      <Text style={styles.error_text}>{errorMessage}</Text>
-                    </View>
+                      <View style={styles.error_text_container}>
+                        <Text style={styles.error_text}>{errorMessage}</Text>
+                        {isErrorDetailsAvailable && (
+                          <Text style={styles.error_link}>
+                            {isErrorDetailsVisible
+                              ? "Masquer les details"
+                              : "Afficher les details"}
+                          </Text>
+                        )}
+                        {isErrorDetailsVisible && errorDetails && (
+                          <View style={styles.error_details}>
+                            <Text style={styles.error_details_label}>URL</Text>
+                            <Text style={styles.error_details_value}>
+                              {errorDetails.url}
+                            </Text>
+                            <Text style={styles.error_details_label}>Erreur</Text>
+                            <Text style={styles.error_details_value}>
+                              {errorDetails.detail}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    </TouchableOpacity>
                   )}
 
                   {/* Bouton de connexion */}
@@ -1014,6 +1117,28 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.error,
     fontWeight: "500",
+  },
+  error_text_container: {
+    flex: 1,
+    gap: 6,
+  },
+  error_link: {
+    fontSize: 12,
+    color: COLORS.text_secondary,
+    textDecorationLine: "underline",
+  },
+  error_details: {
+    gap: 4,
+  },
+  error_details_label: {
+    fontSize: 10,
+    color: COLORS.text_muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  error_details_value: {
+    fontSize: 12,
+    color: COLORS.text_primary,
   },
   /* Bouton de connexion */
   login_button: {
