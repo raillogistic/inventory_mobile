@@ -193,6 +193,7 @@ async function initializeInventoryDatabase(): Promise<void> {
         "id TEXT PRIMARY KEY NOT NULL, " +
         "code TEXT NOT NULL, " +
         "desc TEXT, " +
+        "serialnumber TEXT, " +
         "current_location_id TEXT, " +
         "current_location_name TEXT" +
         ")",
@@ -339,6 +340,12 @@ async function migrateInventoryDatabase(): Promise<void> {
   if (!columnNames.has("current_location_name")) {
     await runInventorySql(
       "ALTER TABLE inventory_articles ADD COLUMN current_location_name TEXT"
+    );
+  }
+
+  if (!columnNames.has("serialnumber")) {
+    await runInventorySql(
+      "ALTER TABLE inventory_articles ADD COLUMN serialnumber TEXT"
     );
   }
 

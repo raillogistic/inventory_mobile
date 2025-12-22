@@ -120,6 +120,8 @@ type InventoryArticleRow = {
   code: string;
   /** Optional article description. */
   desc: string | null;
+  /** Optional serial number. */
+  serialnumber: string | null;
   /** Current location identifier from latest affectation. */
   current_location_id: string | null;
   /** Current location name snapshot. */
@@ -356,7 +358,7 @@ async function loadInventoryArticlesWithMaps(
 
   const [articleResult, articleLocationResult] = await Promise.all([
     runInventorySql(
-      "SELECT id, code, desc, current_location_id, current_location_name " +
+      "SELECT id, code, desc, serialnumber, current_location_id, current_location_name " +
         "FROM inventory_articles ORDER BY code"
     ),
     runInventorySql(
@@ -383,6 +385,7 @@ async function loadInventoryArticlesWithMaps(
     id: row.id,
     code: row.code,
     desc: row.desc ?? null,
+    serialnumber: row.serialnumber ?? null,
     currentLocation: row.current_location_id
       ? {
           id: row.current_location_id,
@@ -419,7 +422,7 @@ export async function loadInventoryArticleByCode(
   const { locationLookup } = await loadLocationsWithMaps();
 
   const articleResult = await runInventorySql<InventoryArticleRow>(
-    "SELECT id, code, desc, current_location_id, current_location_name " +
+    "SELECT id, code, desc, serialnumber, current_location_id, current_location_name " +
       "FROM inventory_articles WHERE UPPER(code) = ? LIMIT 1",
     [normalized]
   );
@@ -447,6 +450,7 @@ export async function loadInventoryArticleByCode(
     id: row.id,
     code: row.code,
     desc: row.desc ?? null,
+    serialnumber: row.serialnumber ?? null,
     currentLocation: row.current_location_id
       ? {
           id: row.current_location_id,
@@ -581,12 +585,13 @@ export async function saveInventoryOfflineCache(
     statements.push({
       sql:
         "INSERT OR REPLACE INTO inventory_articles " +
-        "(id, code, desc, current_location_id, current_location_name) " +
-        "VALUES (?, ?, ?, ?, ?)",
+        "(id, code, desc, serialnumber, current_location_id, current_location_name) " +
+        "VALUES (?, ?, ?, ?, ?, ?)",
       params: [
         article.id,
         article.code,
         article.desc ?? null,
+        article.serialnumber ?? null,
         article.currentLocation?.id ?? null,
         article.currentLocation?.locationname ?? null,
       ],

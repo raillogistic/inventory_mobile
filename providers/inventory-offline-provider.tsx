@@ -271,6 +271,7 @@ function mapOfflineArticles(
       id: item.id,
       code: item.code,
       desc: item.desc ?? null,
+      serialnumber: item.serialnumber ?? null,
       currentLocation: item.current_location ?? null,
       locations,
     };

@@ -3,7 +3,7 @@
  * Affiche les articles de l'inventaire hors ligne groupés par leur emplacement actuel.
  */
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   SectionList,
@@ -132,14 +132,15 @@ export default function ListesScreen() {
   const { cache, isHydrated, isSyncing, syncAll, syncError } =
     useInventoryOffline();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState<string>("");
+  const searchInputRef = useRef<string>("");
+  const [appliedQuery, setAppliedQuery] = useState<string>("");
   const [expandedLocations, setExpandedLocations] = useState<Set<string>>(
     () => new Set()
   );
 
   const filteredArticles = useMemo(
-    () => filterArticlesByQuery(cache.articles, searchQuery),
-    [cache.articles, searchQuery]
+    () => filterArticlesByQuery(cache.articles, appliedQuery),
+    [appliedQuery, cache.articles]
   );
   const sections = useMemo(
     () => buildLocationSections(filteredArticles),
@@ -147,7 +148,7 @@ export default function ListesScreen() {
   );
   const hasArticles = cache.articles.length > 0;
   const isLoading = !isHydrated || (isSyncing && !hasArticles);
-  const hasSearch = normalizeSearchValue(searchQuery).length > 0;
+  const hasSearch = normalizeSearchValue(appliedQuery).length > 0;
   const visibleArticleCount = hasSearch
     ? filteredArticles.length
     : cache.articles.length;
@@ -164,8 +165,23 @@ export default function ListesScreen() {
 
   /** Met ? jour la recherche. */
   const handleSearchChange = useCallback((value: string) => {
-    setSearchQuery(value);
+    searchInputRef.current = value;
   }, []);
+
+  /** Applique la recherche saisie et ouvre les sections concernées. */
+  const handleSearchSubmit = useCallback(() => {
+    const normalized = normalizeSearchValue(searchInputRef.current);
+    setAppliedQuery(normalized);
+
+    if (!normalized) {
+      setExpandedLocations(new Set());
+      return;
+    }
+
+    const matches = filterArticlesByQuery(cache.articles, normalized);
+    const resultSections = buildLocationSections(matches);
+    setExpandedLocations(new Set(resultSections.map((section) => section.id)));
+  }, [cache.articles]);
 
   /** Bascule l'accordion d'une localisation. */
   const handleToggleLocation = useCallback((locationId: string) => {
@@ -215,7 +231,7 @@ export default function ListesScreen() {
   /** Rend une section accord?on avec ses articles. */
   const renderSection = useCallback(
     ({ item }: { item: LocationSection }) => {
-      const isExpanded = hasSearch || expandedLocations.has(item.id);
+      const isExpanded = expandedLocations.has(item.id);
       return (
         <View style={styles.section_block}>
           <TouchableOpacity
@@ -252,7 +268,7 @@ export default function ListesScreen() {
         </View>
       );
     },
-    [expandedLocations, handleToggleLocation, hasSearch, renderItem]
+    [expandedLocations, handleToggleLocation, renderItem]
   );
 
   /** Rend l'en-t?te de la liste. */
@@ -298,12 +314,36 @@ export default function ListesScreen() {
                 style={styles.search_input}
                 placeholder="Rechercher par code ou description"
                 placeholderTextColor={PREMIUM_COLORS.text_muted}
-                value={searchQuery}
                 onChangeText={handleSearchChange}
+                onSubmitEditing={handleSearchSubmit}
                 autoCapitalize="none"
                 autoCorrect={false}
+                returnKeyType="search"
               />
             </View>
+
+            <TouchableOpacity
+              style={styles.search_button}
+              onPress={handleSearchSubmit}
+              activeOpacity={0.7}
+            >
+              <LinearGradient
+                colors={[
+                  PREMIUM_COLORS.accent_secondary,
+                  PREMIUM_COLORS.accent_primary,
+                ]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.search_button_gradient}
+              >
+                <IconSymbol
+                  name="magnifyingglass"
+                  size={16}
+                  color={PREMIUM_COLORS.text_primary}
+                />
+                <Text style={styles.search_button_text}>Rechercher</Text>
+              </LinearGradient>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.refresh_button}
@@ -352,8 +392,8 @@ export default function ListesScreen() {
   }, [
     handleRefresh,
     handleSearchChange,
+    handleSearchSubmit,
     isRefreshing,
-    searchQuery,
     sections.length,
     syncError,
     visibleArticleCount,
@@ -508,13 +548,30 @@ const styles = StyleSheet.create({
     borderColor: PREMIUM_COLORS.input_border,
     paddingHorizontal: 14,
     gap: 10,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   search_input: {
     flex: 1,
     fontSize: 16,
     color: PREMIUM_COLORS.text_primary,
     paddingVertical: 12,
+  },
+  search_button: {
+    borderRadius: 12,
+    overflow: "hidden",
+    marginBottom: 16,
+  },
+  search_button_gradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 10,
+  },
+  search_button_text: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: PREMIUM_COLORS.text_primary,
   },
   refresh_button: {
     borderRadius: 12,

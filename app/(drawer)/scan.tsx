@@ -747,7 +747,7 @@ export default function ScanScreen() {
             description: scan.articleDescription ?? lookup?.desc ?? null,
             customDesc: scan.customDesc ?? null,
             observation: scan.observation ?? null,
-            serialNumber: scan.serialNumber ?? null,
+            serialNumber: scan.serialNumber ?? lookup?.serialnumber ?? null,
             capturedAt: scan.capturedAt,
             hasArticle: Boolean(scan.articleId) || Boolean(lookup),
             status: scan.status,
@@ -1268,7 +1268,8 @@ export default function ScanScreen() {
           capturedAt: existingScan.capturedAt,
           alreadyScanned: true,
           observation: existingScan.observation ?? null,
-          serialNumber: existingScan.serialNumber ?? null,
+          serialNumber:
+            existingScan.serialNumber ?? lookup?.serialnumber ?? null,
         });
         setIsCameraActive(false);
         setSelectedEtat(null);
@@ -1315,6 +1316,7 @@ export default function ScanScreen() {
           codeArticle: cleanedCode,
           articleId: lookup?.id ?? null,
           articleDescription: lookup?.desc ?? null,
+          serialNumber: lookup?.serialnumber ?? null,
           capturedAt: new Date().toISOString(),
           sourceScan: source,
           imageUri,
@@ -1338,7 +1340,7 @@ export default function ScanScreen() {
           capturedAt: record.capturedAt,
           alreadyScanned: false,
           observation: null,
-          serialNumber: null,
+          serialNumber: record.serialNumber ?? lookup?.serialnumber ?? null,
         });
         setIsCameraActive(false);
         setSelectedEtat(null);
@@ -1787,7 +1789,7 @@ export default function ScanScreen() {
                 <TouchableOpacity
                   style={[
                     styles.scanModeButtonInner,
-                    { backgroundColor: "transparent" },
+                    { backgroundColor: PREMIUM_COLORS.gradient_start },
                   ]}
                   onLayout={({ nativeEvent }) =>
                     setScanButtonLayout({
@@ -1832,49 +1834,7 @@ export default function ScanScreen() {
                   </View>
                 </TouchableOpacity>
               </Animated.View>
-              <View style={styles.inputContainer}>
-                <TextInput
-                  style={[
-                    styles.codeInput,
-                    {
-                      borderColor,
-                      color: inputTextColor,
-                      backgroundColor: surfaceColor,
-                    },
-                  ]}
-                  placeholder="Code article"
-                  placeholderTextColor={placeholderColor}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  value={codeValue}
-                  onChangeText={handleCodeChange}
-                  editable={!isScanModalVisible}
-                  ref={codeInputRef}
-                />
-                <TouchableOpacity
-                  style={[
-                    styles.scanButton,
-                    { backgroundColor: highlightColor },
-                  ]}
-                  onPress={handleCodeSubmit}
-                  disabled={isSubmittingScan || isScanModalVisible}
-                  accessibilityRole="button"
-                  accessibilityLabel="Enregistrer le code article"
-                >
-                  {isSubmittingScan ? (
-                    <ActivityIndicator color={buttonTextColor} size="small" />
-                  ) : (
-                    <ThemedText
-                      style={[
-                        styles.scanButtonText,
-                        { color: buttonTextColor },
-                      ]}
-                    >
-                      &gt;
-                    </ThemedText>
-                  )}
-                </TouchableOpacity>
-              </View>
+
               <View style={styles.manualContainer}>
                 <View
                   style={[
@@ -1888,7 +1848,7 @@ export default function ScanScreen() {
                   <TouchableOpacity
                     style={[
                       styles.scanModeButtonInner,
-                      { backgroundColor: "transparent" },
+                      { backgroundColor: PREMIUM_COLORS.gradient_start },
                     ]}
                     onPress={handleOpenManualCapture}
                     disabled={!hasCameraPermission && !canAskCameraPermission}
@@ -1913,6 +1873,39 @@ export default function ScanScreen() {
                     </View>
                   </TouchableOpacity>
                 </View>
+              </View>
+              <View style={styles.inputContainer}>
+                <TextInput
+                  style={styles.codeInput}
+                  placeholder="Entrer le code d'article"
+                  placeholderTextColor={PREMIUM_COLORS.text_muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  value={codeValue}
+                  onChangeText={handleCodeChange}
+                  editable={!isScanModalVisible}
+                  ref={codeInputRef}
+                />
+                <TouchableOpacity
+                  style={styles.scanButton}
+                  onPress={handleCodeSubmit}
+                  disabled={isSubmittingScan || isScanModalVisible}
+                  accessibilityRole="button"
+                  accessibilityLabel="Enregistrer le code article"
+                >
+                  {isSubmittingScan ? (
+                    <ActivityIndicator color={buttonTextColor} size="small" />
+                  ) : (
+                    <ThemedText
+                      style={[
+                        styles.scanButtonText,
+                        { color: buttonTextColor },
+                      ]}
+                    >
+                      &gt;
+                    </ThemedText>
+                  )}
+                </TouchableOpacity>
               </View>
               <Modal
                 transparent
@@ -3083,17 +3076,24 @@ const styles = StyleSheet.create({
     backgroundColor: PREMIUM_COLORS.glass_bg,
     borderWidth: 1,
     borderColor: PREMIUM_COLORS.glass_border,
-    borderRadius: 14,
-    padding: 14,
-    gap: 6,
+    borderRadius: 16,
+    padding: 16,
+    gap: 8,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
   },
   recentDescription: {
-    fontSize: 13,
+    fontSize: 14,
     color: PREMIUM_COLORS.text_muted,
+    lineHeight: 20,
   },
   recentMeta: {
     fontSize: 12,
     color: PREMIUM_COLORS.text_muted,
+    marginTop: 2,
   },
   emptyContainer: {
     paddingVertical: 32,

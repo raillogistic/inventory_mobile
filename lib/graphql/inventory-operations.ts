@@ -358,6 +358,8 @@ export type OfflineArticleEntry = {
   code: string;
   /** Optional article description. */
   desc: string | null;
+  /** Optional serial number for the article. */
+  serialnumber: string | null;
   /** Current location inferred from the latest affectation. */
   currentLocation: OfflineArticleLocation | null;
   /** Locations linked to the article via affectations. */
@@ -372,6 +374,8 @@ export type OfflineArticleQueryItem = {
   code: string;
   /** Optional article description. */
   desc: string | null;
+  /** Optional serial number for the article. */
+  serialnumber: string | null;
   /** Current location inferred from the latest affectation. */
   current_location: OfflineArticleLocation | null;
   /** Affectations linked to the article. */
@@ -422,6 +426,7 @@ export const OFFLINE_ARTICLE_LIST_QUERY = gql`
       id
       code
       desc
+      serialnumber
       current_location {
         id
         locationname
@@ -444,6 +449,7 @@ export const OFFLINE_ARTICLE_PAGES_QUERY = gql`
         id
         code
         desc
+        serialnumber
         current_location {
           id
           locationname
