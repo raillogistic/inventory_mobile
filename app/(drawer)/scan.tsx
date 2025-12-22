@@ -84,6 +84,17 @@ type LocationArticleItem = {
   source: "location" | "extra";
 };
 
+/** Tab keys for the scan list. */
+type ScanListTab = "scanned" | "location";
+
+/** Tab metadata for the scan list UI. */
+type ScanListTabConfig = {
+  /** Unique tab identifier. */
+  id: ScanListTab;
+  /** Label displayed for the tab. */
+  label: string;
+};
+
 /** Payload used to render the scan detail modal. */
 type ScanDetail = {
   /** Unique identifier for the scan record. */
@@ -158,6 +169,11 @@ const ETAT_OPTIONS: EtatOption[] = [
   { value: "BIEN", label: "Bien" },
   { value: "MOYENNE", label: "Moyenne" },
   { value: "HORS_SERVICE", label: "Hors service" },
+];
+/** Tabs available for the scan list view. */
+const SCAN_LIST_TABS: ScanListTabConfig[] = [
+  { id: "scanned", label: "Articles scannes" },
+  { id: "location", label: "Articles du lieu" },
 ];
 
 /**
@@ -274,6 +290,7 @@ export default function ScanScreen() {
     useState<EnregistrementInventaireEtat | null>(null);
   const [observationValue, setObservationValue] = useState<string>("");
   const [serialNumberValue, setSerialNumberValue] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<ScanListTab>("scanned");
   const [scanButtonLayout, setScanButtonLayout] =
     useState<ScanButtonLayout | null>(null);
   const codeInputRef = useRef<TextInput>(null);
@@ -535,14 +552,22 @@ export default function ScanScreen() {
 
     return items;
   }, [locationArticleCodeSet, resolvedScans]);
-  const articleListItems = useMemo<LocationArticleItem[]>(
-    () => [...extraScanItems, ...locationArticleItems],
-    [extraScanItems, locationArticleItems]
-  );
+  const scannedTabItems = useMemo<LocationArticleItem[]>(() => {
+    const scannedLocationItems = locationArticleItems.filter(
+      (item) => item.status === "scanned"
+    );
+    return [...extraScanItems, ...scannedLocationItems];
+  }, [extraScanItems, locationArticleItems]);
+  const activeListItems =
+    activeTab === "scanned" ? scannedTabItems : locationArticleItems;
   const scannedLocationCount = useMemo(() => {
     return locationArticleItems.filter((item) => item.status === "scanned")
       .length;
   }, [locationArticleItems]);
+  const scannedTabCountLabel = useMemo(
+    () => `${scannedTabItems.length} scanne(s)`,
+    [scannedTabItems.length]
+  );
   const articleCountLabel = useMemo(() => {
     if (locationArticleItems.length === 0) {
       return extraScanItems.length > 0
@@ -563,7 +588,7 @@ export default function ScanScreen() {
   const lastScan = resolvedScans[0] ?? null;
   const showArticleLoading =
     (locationArticlesLoading || scansLoading) &&
-    articleListItems.length === 0 &&
+    activeListItems.length === 0 &&
     !isRefreshing;
   const cameraOverlayLabel = isSubmittingScan ? "Scan en cours..." : null;
   const scanBorderColor = useMemo(
@@ -1139,6 +1164,11 @@ export default function ScanScreen() {
     ]
   );
 
+  /** Change the active list tab. */
+  const handleTabChange = useCallback((tab: ScanListTab) => {
+    setActiveTab(tab);
+  }, []);
+
   /** Persist the selected state and move to the next scan. */
   const handleConfirmEtat = useCallback(async () => {
     if (!scanDetail?.id) {
@@ -1255,7 +1285,7 @@ export default function ScanScreen() {
   return (
     <ThemedView style={styles.container}>
       <FlatList
-        data={articleListItems}
+        data={activeListItems}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
         ListHeaderComponent={
@@ -1538,10 +1568,49 @@ export default function ScanScreen() {
             ) : null}
 
             <View style={styles.sectionHeader}>
-              <ThemedText type="subtitle">Articles du lieu</ThemedText>
-              <ThemedText style={[styles.sectionMeta, { color: mutedColor }]}>
-                {articleCountLabel}
+              <ThemedText type="subtitle">
+                {activeTab === "scanned"
+                  ? "Articles scannes"
+                  : "Articles du lieu"}
               </ThemedText>
+              <ThemedText style={[styles.sectionMeta, { color: mutedColor }]}>
+                {activeTab === "scanned"
+                  ? scannedTabCountLabel
+                  : articleCountLabel}
+              </ThemedText>
+            </View>
+            <View
+              style={[
+                styles.tabRow,
+                { borderColor, backgroundColor: surfaceColor },
+              ]}
+            >
+              {SCAN_LIST_TABS.map((tab) => {
+                const isActive = tab.id === activeTab;
+                return (
+                  <TouchableOpacity
+                    key={tab.id}
+                    style={[
+                      styles.tabButton,
+                      isActive
+                        ? { backgroundColor: highlightColor }
+                        : { backgroundColor: "transparent" },
+                    ]}
+                    onPress={() => handleTabChange(tab.id)}
+                  >
+                    <ThemedText
+                      style={[
+                        styles.tabButtonText,
+                        {
+                          color: isActive ? buttonTextColor : textColor,
+                        },
+                      ]}
+                    >
+                      {tab.label}
+                    </ThemedText>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
         }
@@ -1555,12 +1624,29 @@ export default function ScanScreen() {
             </View>
           ) : (
             <View style={styles.emptyContainer}>
-              <ThemedText type="subtitle">
-                Aucun article pour ce lieu
-              </ThemedText>
-              <ThemedText style={[styles.emptyMessage, { color: mutedColor }]}>
-                Verifiez les affectations ou contactez l'administrateur.
-              </ThemedText>
+              {activeTab === "scanned" ? (
+                <>
+                  <ThemedText type="subtitle">
+                    Aucun scan enregistre
+                  </ThemedText>
+                  <ThemedText
+                    style={[styles.emptyMessage, { color: mutedColor }]}
+                  >
+                    Commencez a scanner pour remplir cette liste.
+                  </ThemedText>
+                </>
+              ) : (
+                <>
+                  <ThemedText type="subtitle">
+                    Aucun article pour ce lieu
+                  </ThemedText>
+                  <ThemedText
+                    style={[styles.emptyMessage, { color: mutedColor }]}
+                  >
+                    Verifiez les affectations ou contactez l'administrateur.
+                  </ThemedText>
+                </>
+              )}
             </View>
           )
         }
@@ -2035,6 +2121,25 @@ const styles = StyleSheet.create({
   },
   sectionMeta: {
     fontSize: 13,
+  },
+  tabRow: {
+    flexDirection: "row",
+    borderWidth: 1,
+    borderRadius: 999,
+    padding: 4,
+    marginTop: 12,
+    gap: 6,
+  },
+  tabButton: {
+    flex: 1,
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    alignItems: "center",
+  },
+  tabButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
   },
   listContent: {
     flexGrow: 1,
