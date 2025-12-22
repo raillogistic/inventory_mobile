@@ -423,8 +423,8 @@ export default function LoginScreen() {
 
   // État du formulaire
   const [formState, setFormState] = useState<LoginFormState>({
-    username: "admin",
-    password: "admin",
+    username: "",
+    password: "",
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);

@@ -127,24 +127,6 @@ function buildArticleLookup(
   return map;
 }
 
-/**
- * Build a lookup of expected articles per location.
- */
-function buildLocationArticleIndex(
-  articles: OfflineArticleEntry[]
-): Map<string, OfflineArticleEntry[]> {
-  const map = new Map<string, OfflineArticleEntry[]>();
-
-  for (const article of articles) {
-    for (const location of article.locations) {
-      const entries = map.get(location.id) ?? [];
-      entries.push(article);
-      map.set(location.id, entries);
-    }
-  }
-
-  return map;
-}
 
 /**
  * Transform local scan records into recap-ready records.
@@ -159,22 +141,6 @@ function mapScans(scans: InventoryScanRecord[]): RecapScanItem[] {
     locationId: scan.locationId,
     locationName: scan.locationName,
   }));
-}
-
-/**
- * Build unique scan sets per location for variance checks.
- */
-function buildScanIndex(scans: RecapScanItem[]): Map<string, Set<NormalizedCode>> {
-  const map = new Map<string, Set<NormalizedCode>>();
-
-  for (const scan of scans) {
-    const normalized = normalizeCode(scan.code);
-    const existing = map.get(scan.locationId) ?? new Set<NormalizedCode>();
-    existing.add(normalized);
-    map.set(scan.locationId, existing);
-  }
-
-  return map;
 }
 
 /**
@@ -224,16 +190,18 @@ export function useInventoryRecap(
     () => groupScansByLocation(recapScans),
     [recapScans]
   );
-  const scanIndexByLocation = useMemo(
-    () => buildScanIndex(recapScans),
-    [recapScans]
-  );
+  const scannedCodeSet = useMemo(() => {
+    const set = new Set<NormalizedCode>();
+    for (const scan of recapScans) {
+      const normalized = normalizeCode(scan.code);
+      if (normalized) {
+        set.add(normalized);
+      }
+    }
+    return set;
+  }, [recapScans]);
   const articleLookup = useMemo(
     () => buildArticleLookup(cache.articles),
-    [cache.articles]
-  );
-  const locationArticleIndex = useMemo(
-    () => buildLocationArticleIndex(cache.articles),
     [cache.articles]
   );
 
@@ -290,28 +258,30 @@ export function useInventoryRecap(
     }
 
     const items: EcartNegativeItem[] = [];
+    for (const article of cache.articles) {
+      const normalized = normalizeCode(article.code);
+      if (!normalized || scannedCodeSet.has(normalized)) {
+        continue;
+      }
 
-    for (const [locationId, scannedCodes] of scanIndexByLocation.entries()) {
-      const expectedArticles = locationArticleIndex.get(locationId) ?? [];
+      const fallbackLocation = article.locations[0] ?? null;
+      const locationId =
+        article.currentLocation?.id ?? fallbackLocation?.id ?? "unknown";
       const locationName =
-        recapScans.find((scan) => scan.locationId === locationId)?.locationName ??
+        article.currentLocation?.locationname ??
+        fallbackLocation?.locationname ??
         "Lieu inconnu";
 
-      for (const article of expectedArticles) {
-        const normalized = normalizeCode(article.code);
-        if (!scannedCodes.has(normalized)) {
-          items.push({
-            code: article.code,
-            description: article.desc ?? null,
-            locationId,
-            locationName,
-          });
-        }
-      }
+      items.push({
+        code: article.code,
+        description: article.desc ?? null,
+        locationId,
+        locationName,
+      });
     }
 
     return items;
-  }, [isHydrated, locationArticleIndex, recapScans, scanIndexByLocation]);
+  }, [cache.articles, isHydrated, scannedCodeSet]);
 
   const refresh = useCallback(async () => {
     if (skip) {

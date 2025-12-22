@@ -3,10 +3,10 @@
  * Affiche les articles attendus mais non scannés.
  */
 
-import React, { useCallback } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  ScrollView,
+  SectionList,
   Share,
   StyleSheet,
   Text,
@@ -23,7 +23,7 @@ import {
   PREMIUM_COLORS,
 } from "@/components/ui/premium-theme";
 import { useComptageSession } from "@/hooks/use-comptage-session";
-import { useInventoryRecap } from "@/hooks/use-inventory-recap";
+import { useInventoryRecap, type EcartNegativeItem } from "@/hooks/use-inventory-recap";
 import {
   buildCsv,
   type CsvHeader,
@@ -41,6 +41,45 @@ type EcartNegativeRowProps = {
   /** Nom du lieu où l'article est attendu */
   locationName: string;
 };
+
+/**
+ * Section accord?on pour les ecarts par localisation.
+ */
+type EcartNegativeSection = {
+  /** Identifiant de la localisation. */
+  id: string;
+  /** Titre affiche dans l'en-tete. */
+  title: string;
+  /** Ecarts associes a la localisation. */
+  data: EcartNegativeItem[];
+};
+
+/**
+ * Regroupe les ecarts par localisation.
+ */
+function buildEcartSections(
+  items: EcartNegativeItem[]
+): EcartNegativeSection[] {
+  const map = new Map<string, EcartNegativeSection>();
+
+  for (const item of items) {
+    const section = map.get(item.locationId) ?? {
+      id: item.locationId,
+      title: item.locationName,
+      data: [],
+    };
+    section.data.push(item);
+    map.set(item.locationId, section);
+  }
+
+  const sections = Array.from(map.values());
+  for (const section of sections) {
+    section.data.sort((a, b) => a.code.localeCompare(b.code));
+  }
+
+  return sections.sort((a, b) => a.title.localeCompare(b.title));
+}
+
 
 /**
  * Rend une ligne d'écart négatif.
@@ -93,9 +132,17 @@ export default function EcartNegatifScreen() {
     campaignId,
     groupId
   );
+  const [expandedLocations, setExpandedLocations] = useState<Set<string>>(
+    () => new Set()
+  );
+
 
   const hasGroupSelection = Boolean(campaignId && groupId);
   const hasEcarts = ecartNegative.length > 0;
+  const ecartSections = useMemo(
+    () => buildEcartSections(ecartNegative),
+    [ecartNegative]
+  );
 
   /** Exporter les écarts en CSV. */
   const handleExportCsv = useCallback(async () => {
@@ -125,6 +172,209 @@ export default function EcartNegatifScreen() {
   const handleGoToGroups = useCallback(() => {
     router.push("/(drawer)/groupes");
   }, [router]);
+
+  /** Bascule l'accordion d'une localisation. */
+  const handleToggleLocation = useCallback((locationId: string) => {
+    setExpandedLocations((current) => {
+      const next = new Set(current);
+      if (next.has(locationId)) {
+        next.delete(locationId);
+      } else {
+        next.add(locationId);
+      }
+      return next;
+    });
+  }, []);
+
+  /** Rend une ligne d'ecart negatif. */
+  const renderItem = useCallback(
+    (item: EcartNegativeItem) => (
+      <EcartNegativeRow
+        code={item.code}
+        description={item.description}
+        locationName={item.locationName}
+      />
+    ),
+    []
+  );
+
+  /** Rend une section accord?on. */
+  const renderSection = useCallback(
+    ({ item }: { item: EcartNegativeSection }) => {
+      const isExpanded = expandedLocations.has(item.id);
+      return (
+        <View style={styles.section_block}>
+          <TouchableOpacity
+            style={styles.section_header}
+            onPress={() => handleToggleLocation(item.id)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.section_header_content}>
+              <IconSymbol
+                name="mappin.and.ellipse"
+                size={16}
+                color={PREMIUM_COLORS.accent_primary}
+              />
+              <Text style={styles.section_title}>{item.title}</Text>
+            </View>
+            <View style={styles.section_header_right}>
+              <View style={styles.section_count_badge}>
+                <Text style={styles.section_count}>{item.data.length}</Text>
+              </View>
+              <IconSymbol
+                name={isExpanded ? "chevron.down" : "chevron.right"}
+                size={16}
+                color={PREMIUM_COLORS.text_muted}
+              />
+            </View>
+          </TouchableOpacity>
+          {isExpanded ? (
+            <View style={styles.section_items}>
+              {item.data.map((entry) => (
+                <View key={`${entry.locationId}-${entry.code}`}>
+                  {renderItem(entry)}
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      );
+    },
+    [expandedLocations, handleToggleLocation, renderItem]
+  );
+
+  /** Rend l'en-tete de la liste. */
+  const renderHeader = useCallback(() => {
+    return (
+      <View style={styles.header_section}>
+        <BlurView intensity={20} tint="dark" style={styles.header_blur}>
+          <View style={styles.header_card}>
+            <View style={styles.header_row}>
+              <View style={styles.header_icon}>
+                <IconSymbol
+                  name="minus.circle.fill"
+                  size={24}
+                  color={PREMIUM_COLORS.error}
+                />
+              </View>
+              <View style={styles.header_text}>
+                <Text style={styles.header_title}>Ecart negatif</Text>
+                <Text style={styles.header_subtitle}>
+                  Groupe: {session.group?.nom}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.stat_card}>
+              <Text
+                style={[
+                  styles.stat_value,
+                  hasEcarts && styles.stat_value_error,
+                ]}
+              >
+                {ecartNegative.length}
+              </Text>
+              <Text style={styles.stat_label}>
+                Article(s) attendu(s) non scannes
+              </Text>
+            </View>
+
+            <LinearGradient
+              colors={[
+                "transparent",
+                PREMIUM_COLORS.accent_primary,
+                "transparent",
+              ]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.separator}
+            />
+
+            <View style={styles.action_row}>
+              <TouchableOpacity
+                style={styles.action_button}
+                onPress={handleRefresh}
+                activeOpacity={0.7}
+              >
+                <IconSymbol
+                  name="arrow.clockwise"
+                  size={16}
+                  color={PREMIUM_COLORS.text_secondary}
+                />
+                <Text style={styles.action_button_text}>Actualiser</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.action_button}
+                onPress={handleExportCsv}
+                activeOpacity={0.7}
+              >
+                <IconSymbol
+                  name="square.and.arrow.up"
+                  size={16}
+                  color={PREMIUM_COLORS.text_secondary}
+                />
+                <Text style={styles.action_button_text}>Exporter CSV</Text>
+              </TouchableOpacity>
+            </View>
+
+            {errorMessage && (
+              <View style={styles.error_container}>
+                <IconSymbol
+                  name="exclamationmark.triangle.fill"
+                  size={20}
+                  color={PREMIUM_COLORS.error}
+                />
+                <View style={styles.error_content}>
+                  <Text style={styles.error_title}>Erreur de chargement</Text>
+                  <Text style={styles.error_message}>{errorMessage}</Text>
+                </View>
+              </View>
+            )}
+          </View>
+        </BlurView>
+      </View>
+    );
+  }, [
+    ecartNegative.length,
+    errorMessage,
+    handleExportCsv,
+    handleRefresh,
+    hasEcarts,
+    session.group?.nom,
+  ]);
+
+  /** Rend l'etat vide ou de chargement. */
+  const renderEmpty = useCallback(() => {
+    if (loading) {
+      return (
+        <View style={styles.loading_container}>
+          <ActivityIndicator
+            size="large"
+            color={PREMIUM_COLORS.accent_primary}
+          />
+          <Text style={styles.loading_text}>
+            Chargement de l'ecart negatif...
+          </Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.empty_container}>
+        <View style={styles.empty_icon}>
+          <IconSymbol
+            name="checkmark.seal.fill"
+            size={40}
+            color={PREMIUM_COLORS.success}
+          />
+        </View>
+        <Text style={styles.empty_title}>Aucun ecart negatif</Text>
+        <Text style={styles.empty_subtitle}>
+          Tous les articles attendus ont ete scannes.
+        </Text>
+      </View>
+    );
+  }, [loading]);
 
   if (!hasGroupSelection) {
     return (
@@ -165,152 +415,33 @@ export default function EcartNegatifScreen() {
 
   return (
     <PremiumScreenWrapper>
-      <ScrollView
-        contentContainerStyle={styles.scroll_content}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* En-tête */}
-        <View style={styles.header_section}>
-          <BlurView intensity={20} tint="dark" style={styles.header_blur}>
-            <View style={styles.header_card}>
-              <View style={styles.header_row}>
-                <View style={styles.header_icon}>
-                  <IconSymbol
-                    name="minus.circle.fill"
-                    size={24}
-                    color={PREMIUM_COLORS.error}
-                  />
-                </View>
-                <View style={styles.header_text}>
-                  <Text style={styles.header_title}>Écart négatif</Text>
-                  <Text style={styles.header_subtitle}>
-                    Groupe: {session.group?.nom}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Stat */}
-              <View style={styles.stat_card}>
-                <Text
-                  style={[
-                    styles.stat_value,
-                    hasEcarts && styles.stat_value_error,
-                  ]}
-                >
-                  {ecartNegative.length}
-                </Text>
-                <Text style={styles.stat_label}>
-                  Article(s) attendu(s) non scanné(s)
-                </Text>
-              </View>
-
-              <LinearGradient
-                colors={[
-                  "transparent",
-                  PREMIUM_COLORS.accent_primary,
-                  "transparent",
-                ]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.separator}
-              />
-
-              {/* Actions */}
-              <View style={styles.action_row}>
-                <TouchableOpacity
-                  style={styles.action_button}
-                  onPress={handleRefresh}
-                  activeOpacity={0.7}
-                >
-                  <IconSymbol
-                    name="arrow.clockwise"
-                    size={16}
-                    color={PREMIUM_COLORS.text_secondary}
-                  />
-                  <Text style={styles.action_button_text}>Actualiser</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.action_button}
-                  onPress={handleExportCsv}
-                  activeOpacity={0.7}
-                >
-                  <IconSymbol
-                    name="square.and.arrow.up"
-                    size={16}
-                    color={PREMIUM_COLORS.text_secondary}
-                  />
-                  <Text style={styles.action_button_text}>Exporter CSV</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </BlurView>
-        </View>
-
-        {/* Chargement */}
-        {loading && (
-          <View style={styles.loading_container}>
-            <ActivityIndicator
-              size="large"
-              color={PREMIUM_COLORS.accent_primary}
-            />
-            <Text style={styles.loading_text}>
-              Chargement de l'écart négatif...
-            </Text>
-          </View>
-        )}
-
-        {/* Erreur */}
-        {errorMessage && (
-          <View style={styles.error_container}>
-            <IconSymbol
-              name="exclamationmark.triangle.fill"
-              size={20}
-              color={PREMIUM_COLORS.error}
-            />
-            <View style={styles.error_content}>
-              <Text style={styles.error_title}>Erreur de chargement</Text>
-              <Text style={styles.error_message}>{errorMessage}</Text>
-            </View>
-          </View>
-        )}
-
-        {/* Liste des écarts */}
-        <View style={styles.list_card}>
-          {hasEcarts ? (
-            ecartNegative.map((item) => (
-              <EcartNegativeRow
-                key={`${item.locationId}-${item.code}`}
-                code={item.code}
-                description={item.description}
-                locationName={item.locationName}
-              />
-            ))
-          ) : (
-            <View style={styles.empty_container}>
-              <View style={styles.empty_icon}>
-                <IconSymbol
-                  name="checkmark.seal.fill"
-                  size={40}
-                  color={PREMIUM_COLORS.success}
-                />
-              </View>
-              <Text style={styles.empty_title}>Aucun écart négatif</Text>
-              <Text style={styles.empty_subtitle}>
-                Tous les articles attendus ont été scannés.
-              </Text>
-            </View>
-          )}
-        </View>
-      </ScrollView>
+      <View style={styles.list_wrapper}>
+        <SectionList
+          sections={[{ id: "accordion", title: "accordion", data: ecartSections }]}
+          keyExtractor={(item) => item.id}
+          renderItem={renderSection}
+          renderSectionHeader={() => null}
+          ListHeaderComponent={renderHeader}
+          ListEmptyComponent={renderEmpty}
+          contentContainerStyle={styles.scroll_content}
+          showsVerticalScrollIndicator={false}
+          stickySectionHeadersEnabled={false}
+        />
+      </View>
     </PremiumScreenWrapper>
   );
 }
+
 
 /**
  * Styles du composant EcartNegatifScreen.
  */
 const styles = StyleSheet.create({
+  list_wrapper: {
+    flex: 1,
+  },
   scroll_content: {
+    flexGrow: 1,
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 32,
@@ -377,6 +508,57 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: PREMIUM_COLORS.text_muted,
     marginTop: 4,
+  },
+  section_block: {
+    backgroundColor: PREMIUM_COLORS.glass_bg,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: PREMIUM_COLORS.glass_border,
+    overflow: "hidden",
+  },
+  section_header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+  },
+  section_header_content: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+  },
+  section_title: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: PREMIUM_COLORS.text_primary,
+    flexShrink: 1,
+  },
+  section_header_right: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  section_count_badge: {
+    minWidth: 28,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    backgroundColor: PREMIUM_COLORS.error_bg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  section_count: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: PREMIUM_COLORS.error,
+  },
+  section_items: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    gap: 10,
   },
   separator: {
     height: 1,
