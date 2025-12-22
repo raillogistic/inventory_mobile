@@ -671,6 +671,24 @@ export default function DrawerLayout() {
           }}
         />
         <Drawer.Screen
+          name="ecart-negatif"
+          options={{
+            title: "Ecart negatif",
+            drawerIcon: ({ color }) => (
+              <IconSymbol name="minus.circle.fill" size={20} color={color} />
+            ),
+          }}
+        />
+        <Drawer.Screen
+          name="ecart-positif"
+          options={{
+            title: "Ecart positif",
+            drawerIcon: ({ color }) => (
+              <IconSymbol name="plus.circle.fill" size={20} color={color} />
+            ),
+          }}
+        />
+        <Drawer.Screen
           name="history"
           options={{
             title: "Historique",
