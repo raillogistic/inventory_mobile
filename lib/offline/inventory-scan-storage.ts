@@ -24,6 +24,10 @@ export type InventoryScanRecord = {
   locationId: string;
   /** Location label captured at scan time. */
   locationName: string;
+  /** GPS latitude captured for the scan, when available. */
+  latitude: string | null;
+  /** GPS longitude captured for the scan, when available. */
+  longitude: string | null;
   /** Scanned article code. */
   codeArticle: string;
   /** Optional article identifier when the code matches the catalog. */
@@ -82,6 +86,10 @@ export type InventoryScanCreateInput = {
   locationId: string;
   /** Location label for display. */
   locationName: string;
+  /** Optional GPS latitude captured at scan time. */
+  latitude?: string | null;
+  /** Optional GPS longitude captured at scan time. */
+  longitude?: string | null;
   /** Scanned article code. */
   codeArticle: string;
   /** Optional article identifier. */
@@ -148,6 +156,10 @@ type InventoryScanRow = {
   lieu_id: string;
   /** Location label snapshot. */
   lieu_name: string;
+  /** GPS latitude captured at scan time. */
+  latitude: string | null;
+  /** GPS longitude captured at scan time. */
+  longitude: string | null;
   /** Scanned article code. */
   code_article: string;
   /** Article identifier. */
@@ -204,6 +216,8 @@ function mapInventoryScanRow(row: InventoryScanRow): InventoryScanRecord {
     groupId: row.groupe_id,
     locationId: row.lieu_id,
     locationName: row.lieu_name,
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
     codeArticle: row.code_article,
     articleId: row.article_id ?? null,
     articleDescription: row.article_desc ?? null,
@@ -267,7 +281,7 @@ export async function loadInventoryScans(
   const { whereClause, params } = buildScanFilters(filter);
   const limitClause = filter.limit ? "LIMIT ?" : "";
   const sql =
-    "SELECT id, remote_id, campagne_id, groupe_id, lieu_id, lieu_name, code_article, " +
+    "SELECT id, remote_id, campagne_id, groupe_id, lieu_id, lieu_name, latitude, longitude, code_article, " +
     "article_id, article_desc, observation, commentaire, custom_desc, serial_number, etat, capture_le, source_scan, " +
     "image_uri, image_uri2, image_uri3, status, status_label, is_synced, updated_at " +
     `FROM inventory_scans ${whereClause} ` +
@@ -298,6 +312,8 @@ export async function createInventoryScan(
     groupId: input.groupId,
     locationId: input.locationId,
     locationName: input.locationName,
+    latitude: input.latitude ?? null,
+    longitude: input.longitude ?? null,
     codeArticle: input.codeArticle,
     articleId: input.articleId ?? null,
     articleDescription: input.articleDescription ?? null,
@@ -318,9 +334,9 @@ export async function createInventoryScan(
 
   await runInventorySql(
     "INSERT INTO inventory_scans " +
-      "(id, remote_id, code_article, article_id, article_desc, campagne_id, groupe_id, lieu_id, lieu_name, " +
+      "(id, remote_id, code_article, article_id, article_desc, campagne_id, groupe_id, lieu_id, lieu_name, latitude, longitude, " +
       "commentaire, custom_desc, observation, serial_number, etat, capture_le, source_scan, image_uri, image_uri2, image_uri3, status, status_label, is_synced, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       record.id,
       record.remoteId,
@@ -331,6 +347,8 @@ export async function createInventoryScan(
       record.groupId,
       record.locationId,
       record.locationName,
+      record.latitude,
+      record.longitude,
       record.customDesc,
       record.customDesc,
       record.observation,

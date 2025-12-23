@@ -222,6 +222,8 @@ async function buildScanSyncInput(
     code_article: scan.codeArticle,
     capture_le: scan.capturedAt,
     source_scan: scan.sourceScan ?? undefined,
+    latitude: scan.latitude ?? undefined,
+    longitude: scan.longitude ?? undefined,
     donnees_capture: (await buildScanCapturePayload(scan)) ?? undefined,
     custom_desc: scan.customDesc ?? undefined,
     observation: scan.observation ?? undefined,

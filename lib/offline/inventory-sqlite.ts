@@ -233,6 +233,8 @@ async function initializeInventoryDatabase(): Promise<void> {
         "etat TEXT, " +
         "capture_le TEXT NOT NULL, " +
         "source_scan TEXT, " +
+        "latitude TEXT, " +
+        "longitude TEXT, " +
         "image_uri TEXT, " +
         "image_uri2 TEXT, " +
         "image_uri3 TEXT, " +
@@ -379,6 +381,18 @@ async function migrateInventoryDatabase(): Promise<void> {
   if (!scanColumnNames.has("image_uri3")) {
     await runInventorySql(
       "ALTER TABLE inventory_scans ADD COLUMN image_uri3 TEXT"
+    );
+  }
+
+  if (!scanColumnNames.has("latitude")) {
+    await runInventorySql(
+      "ALTER TABLE inventory_scans ADD COLUMN latitude TEXT"
+    );
+  }
+
+  if (!scanColumnNames.has("longitude")) {
+    await runInventorySql(
+      "ALTER TABLE inventory_scans ADD COLUMN longitude TEXT"
     );
   }
 }

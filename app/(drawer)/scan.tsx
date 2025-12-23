@@ -25,6 +25,7 @@ import {
   type BarcodeType,
   useCameraPermissions,
 } from "expo-camera";
+import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
@@ -74,6 +75,14 @@ type RecentScan = {
 
 /** Origin source of the scan capture. */
 type ScanSource = "manual" | "camera";
+
+/** GPS coordinates captured for a scan. */
+type ScanCoordinates = {
+  /** Latitude value captured from the device. */
+  latitude: string | null;
+  /** Longitude value captured from the device. */
+  longitude: string | null;
+};
 
 /** Visual status applied to location article rows. */
 type LocationArticleStatus = "pending" | "scanned" | "missing" | "other";
@@ -243,6 +252,59 @@ function buildOfflineArticleLookup(
  */
 function normalizeScanCode(value: string): string {
   return value.trim().toUpperCase();
+}
+
+/**
+ * Format device coordinates into a scan-friendly payload.
+ */
+function formatScanCoordinates(
+  coords: Location.LocationObjectCoords
+): ScanCoordinates {
+  return {
+    latitude: Number.isFinite(coords.latitude)
+      ? coords.latitude.toString()
+      : null,
+    longitude: Number.isFinite(coords.longitude)
+      ? coords.longitude.toString()
+      : null,
+  };
+}
+
+/**
+ * Resolve GPS coordinates without prompting the user.
+ */
+async function getSilentScanCoordinates(): Promise<ScanCoordinates | null> {
+  try {
+    const permission = await Location.getForegroundPermissionsAsync();
+    if (!permission.granted) {
+      return null;
+    }
+
+    const lastKnown = await Location.getLastKnownPositionAsync();
+    if (lastKnown?.coords) {
+      return formatScanCoordinates(lastKnown.coords);
+    }
+
+    const currentPositionPromise = Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+      mayShowUserSettingsDialog: false,
+    }).catch(() => null);
+    const timeoutPromise = new Promise<null>((resolve) => {
+      setTimeout(() => resolve(null), 1500);
+    });
+    const currentPosition = await Promise.race([
+      currentPositionPromise,
+      timeoutPromise,
+    ]);
+
+    if (!currentPosition?.coords) {
+      return null;
+    }
+
+    return formatScanCoordinates(currentPosition.coords);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1094,11 +1156,14 @@ export default function ScanScreen() {
     setIsManualSaving(true);
     setManualError(null);
     try {
+      const scanCoordinates = await getSilentScanCoordinates();
       const record = await createInventoryScan({
         campaignId,
         groupId,
         locationId,
         locationName: session.location?.locationname ?? "Lieu inconnu",
+        latitude: scanCoordinates?.latitude ?? null,
+        longitude: scanCoordinates?.longitude ?? null,
         codeArticle: buildManualCode(),
         articleId: null,
         articleDescription: null,
@@ -1529,11 +1594,14 @@ export default function ScanScreen() {
         const normalizedCode = normalizeScanCode(scanDetail.code);
         const resolvedArticle =
           normalizedCode.length > 0 ? articleLookup.get(normalizedCode) : null;
+        const scanCoordinates = await getSilentScanCoordinates();
         savedRecord = await createInventoryScan({
           campaignId,
           groupId,
           locationId,
           locationName,
+          latitude: scanCoordinates?.latitude ?? null,
+          longitude: scanCoordinates?.longitude ?? null,
           codeArticle: scanDetail.code,
           articleId: scanDetail.articleId ?? resolvedArticle?.id ?? null,
           articleDescription:

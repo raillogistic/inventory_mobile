@@ -755,6 +755,10 @@ export type InventoryScanSyncInput = {
   capture_le?: string | null;
   /** Scan origin (camera/manual). */
   source_scan?: string | null;
+  /** Optional GPS latitude captured at scan time. */
+  latitude?: string | null;
+  /** Optional GPS longitude captured at scan time. */
+  longitude?: string | null;
   /** Optional capture payload for images or metadata. */
   donnees_capture?: string | null;
   /** Optional observation for the scan. */

@@ -3,9 +3,11 @@ import {
   DefaultTheme,
   ThemeProvider,
 } from "@react-navigation/native";
+import { useEffect } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import "react-native-reanimated";
+import * as Location from "expo-location";
 
 import { AuthGate } from "@/components/auth/auth-gate";
 import { useColorScheme } from "@/hooks/use-color-scheme";
@@ -19,10 +21,37 @@ export const unstable_settings = {
 };
 
 /**
+ * Request location permission when the app loads.
+ */
+async function requestLocationPermissionOnLaunch(): Promise<void> {
+  try {
+    await Location.requestForegroundPermissionsAsync();
+  } catch {
+    // Ignore permission errors to avoid blocking the app.
+  }
+}
+
+/**
+ * Trigger a one-time location permission request.
+ */
+function useLocationPermissionOnLaunch(): void {
+  /**
+   * Invoke the permission flow on mount.
+   */
+  function handleLocationPermission(): void {
+    void requestLocationPermissionOnLaunch();
+  }
+
+  useEffect(handleLocationPermission, []);
+}
+
+/**
  * Root layout with theme, authentication, and Apollo providers.
  */
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+
+  useLocationPermissionOnLaunch();
 
   return (
     <AuthProvider>

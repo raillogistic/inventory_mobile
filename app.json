@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "rail inventaire",
+    "name": "RAIL-INV",
     "slug": "mobile",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "mobile",
@@ -12,6 +12,7 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Cette application a besoin de la camera pour scanner les codes-barres.",
+        "NSLocationWhenInUseUsageDescription": "Cette application a besoin de votre position pour enregistrer la localisation GPS des scans.",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         }
@@ -25,7 +26,12 @@
         "backgroundImage": "./assets/images/icon.png",
         "monochromeImage": "./assets/images/icon.png"
       },
-      "permissions": ["CAMERA", "INTERNET"],
+      "permissions": [
+        "CAMERA",
+        "INTERNET",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
