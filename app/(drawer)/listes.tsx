@@ -46,6 +46,8 @@ type LocationSection = {
   id: string;
   /** Titre affiché dans l'en-tête de section */
   title: string;
+  /** Total number of articles for this location */
+  itemCount: number;
   /** Articles appartenant à cette localisation */
   data: ArticleListItem[];
 };
@@ -106,6 +108,7 @@ function buildLocationSections(
     const section = sections.get(locationId) ?? {
       id: locationId,
       title: locationName,
+      itemCount: 0,
       data: [],
     };
 
@@ -115,6 +118,7 @@ function buildLocationSections(
       description: article.desc ?? null,
       currentLocationName: article.currentLocation?.locationname ?? null,
     });
+    section.itemCount += 1;
     sections.set(locationId, section);
   }
 
@@ -148,12 +152,21 @@ export default function ListesScreen() {
     () => buildLocationSections(filteredArticles),
     [filteredArticles]
   );
+  const sectionListSections = useMemo(
+    () =>
+      sections.map((section) => ({
+        ...section,
+        data: expandedLocations.has(section.id) ? section.data : [],
+      })),
+    [expandedLocations, sections]
+  );
   const hasArticles = cache.articles.length > 0;
   const isLoading = !isHydrated || (isSyncing && !hasArticles);
   const hasSearch = normalizeSearchValue(appliedQuery).length > 0;
   const visibleArticleCount = hasSearch
     ? filteredArticles.length
     : cache.articles.length;
+  const shouldShowEmptyState = isLoading || filteredArticles.length === 0;
 
   /** Rafra?chit le cache hors ligne. */
   const handleRefresh = useCallback(async () => {
@@ -200,7 +213,7 @@ export default function ListesScreen() {
 
   /** Rend une ligne d'article. */
   const renderItem = useCallback(
-    (item: ArticleListItem) => (
+    ({ item }: { item: ArticleListItem }) => (
       <View style={styles.article_card}>
         <View style={styles.article_icon}>
           <IconSymbol
@@ -230,15 +243,15 @@ export default function ListesScreen() {
     []
   );
 
-  /** Rend une section accord?on avec ses articles. */
-  const renderSection = useCallback(
-    ({ item }: { item: LocationSection }) => {
-      const isExpanded = expandedLocations.has(item.id);
-      () => (
+  /** Render the accordion section header. */
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: LocationSection }) => {
+      const isExpanded = expandedLocations.has(section.id);
+      return (
         <View style={styles.section_block}>
           <TouchableOpacity
             style={styles.section_header}
-            onPress={() => handleToggleLocation(item.id)}
+            onPress={() => handleToggleLocation(section.id)}
             activeOpacity={0.7}
           >
             <View style={styles.section_header_content}>
@@ -247,11 +260,11 @@ export default function ListesScreen() {
                 size={16}
                 color={PREMIUM_COLORS.accent_primary}
               />
-              <Text style={styles.section_title}>{item.title}</Text>
+              <Text style={styles.section_title}>{section.title}</Text>
             </View>
             <View style={styles.section_header_right}>
               <View style={styles.section_count_badge}>
-                <Text style={styles.section_count}>{item.data.length}</Text>
+                <Text style={styles.section_count}>{section.itemCount}</Text>
               </View>
               <IconSymbol
                 name={isExpanded ? "chevron.down" : "chevron.right"}
@@ -260,17 +273,10 @@ export default function ListesScreen() {
               />
             </View>
           </TouchableOpacity>
-          {isExpanded ? (
-            <View style={styles.section_items}>
-              {item.data.map((article) => (
-                <View key={article.id}>{renderItem(article)}</View>
-              ))}
-            </View>
-          ) : null}
         </View>
       );
     },
-    [expandedLocations, handleToggleLocation, renderItem]
+    [expandedLocations, handleToggleLocation]
   );
 
   /** Rend l'en-t?te de la liste. */
@@ -465,16 +471,21 @@ export default function ListesScreen() {
     <PremiumScreenWrapper>
       <View style={styles.list_wrapper}>
         <SectionList
-          sections={[{ id: "accordion", title: "accordion", data: sections }]}
+          sections={sectionListSections}
           keyExtractor={(item) => item.id}
-          renderItem={renderSection}
-          renderSectionHeader={() => null}
+          renderItem={renderItem}
+          renderSectionHeader={renderSectionHeader}
           ListHeaderComponent={headerElement}
-          ListEmptyComponent={renderEmpty}
+          ListEmptyComponent={shouldShowEmptyState ? renderEmpty : null}
           contentContainerStyle={styles.list_content}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           stickySectionHeadersEnabled={false}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          updateCellsBatchingPeriod={50}
+          windowSize={9}
+          removeClippedSubviews
           refreshing={isRefreshing}
           onRefresh={handleRefresh}
         />

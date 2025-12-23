@@ -2,7 +2,7 @@
   "expo": {
     "name": "rail inventaire",
     "slug": "mobile",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "mobile",
@@ -25,10 +25,7 @@
         "backgroundImage": "./assets/images/icon.png",
         "monochromeImage": "./assets/images/icon.png"
       },
-      "permissions": [
-        "CAMERA",
-        "INTERNET"
-      ],
+      "permissions": ["CAMERA", "INTERNET"],
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
