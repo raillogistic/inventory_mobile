@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { Platform, ToastAndroid } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
+import * as ImageManipulator from "expo-image-manipulator";
 import { ApolloError, useApolloClient } from "@apollo/client";
 
 import { useAuth } from "@/hooks/use-auth";
@@ -56,7 +57,13 @@ const OFFLINE_SYNC_LIMITS = {
 } as const;
 
 /** Max number of scan records to sync per request. */
-const SCAN_SYNC_BATCH_SIZE = 100;
+const SCAN_SYNC_BATCH_SIZE = 1;
+
+/** JPEG quality used for scan image compression (0..1). */
+const SCAN_IMAGE_COMPRESSION_QUALITY = 0.7;
+
+/** MIME type for compressed scan images. */
+const SCAN_IMAGE_MIME_TYPE = "image/jpeg";
 
 /** Base64 metadata payload used for scan image sync. */
 type ScanCapturePayload = {
@@ -132,29 +139,53 @@ function chunkItems<T>(items: T[], size: number): T[][] {
 }
 
 /**
- * Infer the mime type from a local image URI.
- */
-function guessImageMimeType(uri: string): string {
-  const lowered = uri.toLowerCase();
-  if (lowered.endsWith(".png")) {
-    return "image/png";
-  }
-  if (lowered.endsWith(".webp")) {
-    return "image/webp";
-  }
-  if (lowered.endsWith(".heic") || lowered.endsWith(".heif")) {
-    return "image/heic";
-  }
-  return "image/jpeg";
-}
-
-/**
  * Extract a filename from a file URI if possible.
  */
 function extractFileName(uri: string): string | null {
   const trimmed = uri.split("?")[0] ?? "";
   const parts = trimmed.split("/");
   return parts.length > 0 ? parts[parts.length - 1] ?? null : null;
+}
+
+/**
+ * Normalize a filename to a .jpg extension when compressing.
+ */
+function normalizeJpegFileName(name: string | null): string | null {
+  if (!name) {
+    return null;
+  }
+
+  const baseName = name.split(".")[0] ?? "scan";
+  return `${baseName}.jpg`;
+}
+
+/**
+ * Compress a scan image and return base64 payload with metadata.
+ * @param uri - Local image URI.
+ * @returns Base64 data and metadata for GraphQL payload.
+ */
+async function compressImageForSync(
+  uri: string
+): Promise<{ base64: string; mimeType: string; filename: string | null }> {
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [],
+    {
+      compress: SCAN_IMAGE_COMPRESSION_QUALITY,
+      format: ImageManipulator.SaveFormat.JPEG,
+      base64: true,
+    }
+  );
+
+  if (!result.base64) {
+    throw new Error("Image compression failed.");
+  }
+
+  return {
+    base64: result.base64,
+    mimeType: SCAN_IMAGE_MIME_TYPE,
+    filename: normalizeJpegFileName(extractFileName(uri)),
+  };
 }
 
 /**
@@ -178,25 +209,19 @@ async function buildScanCapturePayload(
       throw new Error("Image introuvable pour le scan.");
     }
 
-    let base64: string;
+    let compressed;
     try {
-      base64 = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      compressed = await compressImageForSync(uri);
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Lecture image impossible.";
+        error instanceof Error ? error.message : "Compression image impossible.";
       throw new Error(message);
     }
 
-    if (!base64) {
-      throw new Error("Image vide.");
-    }
-
     images.push({
-      data_base64: base64,
-      mime_type: guessImageMimeType(uri),
-      filename: extractFileName(uri),
+      data_base64: compressed.base64,
+      mime_type: compressed.mimeType,
+      filename: compressed.filename,
     });
   }
 
@@ -514,7 +539,9 @@ export function InventoryOfflineProvider({
       if (errorDetails.length > 0) {
         const sample = errorDetails.slice(0, 3).join(" | ");
         const suffix =
-          errorDetails.length > 3 ? ` (+${errorDetails.length - 3} autres)` : "";
+          errorDetails.length > 3
+            ? ` (+${errorDetails.length - 3} autres)`
+            : "";
         setScanSyncError(`Echecs de sync: ${sample}${suffix}`);
       }
 

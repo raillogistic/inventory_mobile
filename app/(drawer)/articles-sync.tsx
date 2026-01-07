@@ -297,7 +297,9 @@ export default function ArticlesSyncScreen() {
                 />
               </View>
               <View style={styles.header_text}>
-                <Text style={styles.header_title}>Articles à synchroniser</Text>
+                <Text style={styles.header_title}>
+                  Articles à synchroniser*
+                </Text>
                 <Text style={styles.header_subtitle}>
                   {pendingScans.length} en attente • {syncedScans.length}{" "}
                   synchronisés

@@ -30,6 +30,10 @@
         "CAMERA",
         "INTERNET",
         "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "INTERNET",
+        "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
       ],
       "usesCleartextTraffic": true,
@@ -80,6 +84,12 @@
       "eas": {
         "projectId": "3f7943ff-88e8-43ef-a341-fbd085d7895f"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/3f7943ff-88e8-43ef-a341-fbd085d7895f"
     }
   }
 }
