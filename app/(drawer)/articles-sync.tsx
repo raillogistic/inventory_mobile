@@ -110,6 +110,7 @@ export default function ArticlesSyncScreen() {
     syncScanById,
     syncScanImageById,
     syncScans,
+    syncScansWithoutImages,
   } = useInventoryOffline();
   const [activeTab, setActiveTab] = useState<SyncTabId>("pending");
   const [pendingScans, setPendingScans] = useState<InventoryScanRecord[]>([]);
@@ -203,6 +204,44 @@ export default function ArticlesSyncScreen() {
       showSyncMessage(message);
     }
   }, [isScanSyncing, loadScans, showSyncMessage, syncScans]);
+
+  /** Lance la synchronisation sans images. */
+  const handleSyncNowNoImage = useCallback(async () => {
+    if (isScanSyncing) {
+      return;
+    }
+
+    try {
+      const summary = await syncScansWithoutImages();
+      await loadScans();
+
+      if (summary.totalCount === 0) {
+        showSyncMessage("Aucun article a synchroniser.");
+        return;
+      }
+
+      if (summary.failedCount === 0) {
+        showSyncMessage(
+          `${summary.syncedCount} article(s) synchronise(s) sans image.`
+        );
+        return;
+      }
+
+      const errorSummary =
+        summary.errors && summary.errors.length > 0
+          ? ` (${summary.errors.slice(0, 2).join(" | ")}${
+              summary.errors.length > 2 ? " +..." : ""
+            })`
+          : "";
+      showSyncMessage(
+        `${summary.syncedCount}/${summary.totalCount} articles synchronises sans image.${errorSummary}`
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "La synchronisation a echoue.";
+      showSyncMessage(message);
+    }
+  }, [isScanSyncing, loadScans, showSyncMessage, syncScansWithoutImages]);
 
   /**
    * Sync a single scan record by id.
@@ -601,40 +640,62 @@ export default function ArticlesSyncScreen() {
 
             {/* Bouton sync */}
             {activeTab === "pending" && (
-              <TouchableOpacity
-                style={[
-                  styles.sync_button,
-                  isScanSyncing && styles.sync_button_disabled,
-                ]}
-                onPress={handleSyncNow}
-                disabled={isScanSyncing}
-                activeOpacity={0.7}
-              >
-                <LinearGradient
-                  colors={
-                    isScanSyncing
-                      ? [PREMIUM_COLORS.glass_bg, PREMIUM_COLORS.glass_bg]
-                      : [
-                          PREMIUM_COLORS.accent_primary,
-                          PREMIUM_COLORS.accent_secondary,
-                        ]
-                  }
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.sync_button_gradient}
+              <View>
+                <TouchableOpacity
+                  style={[
+                    styles.sync_button,
+                    isScanSyncing && styles.sync_button_disabled,
+                  ]}
+                  onPress={handleSyncNow}
+                  disabled={isScanSyncing}
+                  activeOpacity={0.7}
                 >
-                  <IconSymbol
-                    name="arrow.clockwise"
-                    size={18}
-                    color={PREMIUM_COLORS.text_primary}
-                  />
-                  <Text style={styles.sync_button_text}>
-                    {isScanSyncing
-                      ? "Synchronisation..."
-                      : "Synchroniser maintenant"}
-                  </Text>
-                </LinearGradient>
-              </TouchableOpacity>
+                  <LinearGradient
+                    colors={
+                      isScanSyncing
+                        ? [PREMIUM_COLORS.glass_bg, PREMIUM_COLORS.glass_bg]
+                        : [
+                            PREMIUM_COLORS.accent_primary,
+                            PREMIUM_COLORS.accent_secondary,
+                          ]
+                    }
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.sync_button_gradient}
+                  >
+                    <IconSymbol
+                      name="arrow.clockwise"
+                      size={18}
+                      color={PREMIUM_COLORS.text_primary}
+                    />
+                    <Text style={styles.sync_button_text}>
+                      {isScanSyncing
+                        ? "Synchronisation..."
+                        : "Synchroniser maintenant"}
+                    </Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.sync_button_secondary,
+                    isScanSyncing && styles.sync_button_disabled,
+                  ]}
+                  onPress={handleSyncNowNoImage}
+                  disabled={isScanSyncing}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.sync_button_secondary_content}>
+                    <IconSymbol
+                      name="photo.slash"
+                      size={16}
+                      color={PREMIUM_COLORS.text_muted}
+                    />
+                    <Text style={styles.sync_button_secondary_text}>
+                      Synchroniser sans image
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
             )}
 
             {/* Erreurs */}
@@ -674,6 +735,7 @@ export default function ArticlesSyncScreen() {
   }, [
     activeTab,
     handleSyncNow,
+    handleSyncNowNoImage,
     handleTabChange,
     isLoading,
     isScanSyncing,
@@ -851,6 +913,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
     color: PREMIUM_COLORS.text_primary,
+  },
+  sync_button_secondary: {
+    marginTop: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: PREMIUM_COLORS.glass_border,
+    backgroundColor: PREMIUM_COLORS.glass_bg,
+    overflow: "hidden",
+  },
+  sync_button_secondary_content: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 12,
+  },
+  sync_button_secondary_text: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: PREMIUM_COLORS.text_muted,
   },
   /* Erreurs */
   error_container: {

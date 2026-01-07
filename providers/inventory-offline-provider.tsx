@@ -315,6 +315,8 @@ export type InventoryOfflineContextValue = {
   syncAll: () => Promise<void>;
   /** Upload local scan records to the backend. */
   syncScans: () => Promise<InventoryScanSyncSummary>;
+  /** Upload local scan records without images. */
+  syncScansWithoutImages: () => Promise<InventoryScanSyncSummary>;
   /** Upload a single scan record by id to the backend. */
   syncScanById: (
     scanId: string,
@@ -709,116 +711,138 @@ export function InventoryOfflineProvider({
     [accessToken, client, isAuthenticated]
   );
 
+  /**
+   * Upload local scan records with optional image inclusion.
+   * @param options - Sync options for scan payloads.
+   */
+  const syncScansInternal = useCallback(
+    async (options?: InventoryScanSyncOptions): Promise<InventoryScanSyncSummary> => {
+      if (!isAuthenticated || !accessToken) {
+        const message = "Connexion requise pour synchroniser.";
+        setScanSyncError(message);
+        throw new Error(message);
+      }
+
+      setIsScanSyncing(true);
+      setScanSyncError(null);
+
+      try {
+        const pendingScans = await loadInventoryScans({ isSynced: false });
+        if (pendingScans.length === 0) {
+          return { totalCount: 0, syncedCount: 0, failedCount: 0 };
+        }
+
+        const includeImages = options?.includeImages ?? true;
+        const preparationErrorMessage = includeImages
+          ? "Preparation image impossible."
+          : "Preparation scan impossible.";
+
+        const syncUpdates: InventoryScanSyncUpdateInput[] = [];
+        const errorDetails: string[] = [];
+        let failedCount = 0;
+
+        for (const batch of chunkItems(pendingScans, SCAN_SYNC_BATCH_SIZE)) {
+          const input: InventoryScanSyncInput[] = [];
+          const syncBatchScans: InventoryScanRecord[] = [];
+
+          for (const scan of batch) {
+            try {
+              const payload = await buildScanSyncInput(scan, options);
+              input.push(payload);
+              syncBatchScans.push(scan);
+            } catch (error) {
+              failedCount += 1;
+              const message =
+                error instanceof Error ? error.message : preparationErrorMessage;
+              errorDetails.push(`${scan.codeArticle}: ${message}`);
+            }
+          }
+
+          if (input.length === 0) {
+            continue;
+          }
+
+          const response = await client.mutate<
+            SyncInventoryScansData,
+            SyncInventoryScansVariables
+          >({
+            mutation: SYNC_INVENTORY_SCANS_MUTATION,
+            variables: { input },
+            fetchPolicy: "no-cache",
+          });
+
+          const results = response.data?.sync_inventory_scans?.results ?? [];
+          const resultMap = new Map(
+            results.map((result) => [result.local_id, result])
+          );
+
+          for (const scan of syncBatchScans) {
+            const result = resultMap.get(scan.id);
+            if (result?.ok && result.remote_id) {
+              syncUpdates.push({
+                id: scan.id,
+                remoteId: result.remote_id,
+                syncedWithoutImage: includeImages ? false : true,
+              });
+            } else {
+              failedCount += 1;
+              const reason =
+                result?.errors && result.errors.length > 0
+                  ? result.errors.join(", ")
+                  : "Reponse manquante.";
+              errorDetails.push(`${scan.codeArticle}: ${reason}`);
+            }
+          }
+        }
+
+        if (syncUpdates.length > 0) {
+          await markInventoryScansSynced(syncUpdates);
+        }
+
+        if (errorDetails.length > 0) {
+          const sample = errorDetails.slice(0, 3).join(" | ");
+          const suffix =
+            errorDetails.length > 3
+              ? ` (+${errorDetails.length - 3} autres)`
+              : "";
+          setScanSyncError(`Echecs de sync: ${sample}${suffix}`);
+        }
+
+        const syncedCount = syncUpdates.length;
+        return {
+          totalCount: pendingScans.length,
+          syncedCount,
+          failedCount,
+          errors: errorDetails.length > 0 ? errorDetails : undefined,
+        };
+      } catch (error) {
+        const message =
+          error instanceof ApolloError
+            ? getApolloErrorMessage(error)
+            : error instanceof Error
+            ? error.message
+            : "La synchronisation des scans a echoue.";
+        setScanSyncError(message);
+        throw new Error(message);
+      } finally {
+        setIsScanSyncing(false);
+      }
+    },
+    [accessToken, client, isAuthenticated]
+  );
+
   /** Upload local scan records to the backend API. */
   const syncScans = useCallback(async (): Promise<InventoryScanSyncSummary> => {
-    if (!isAuthenticated || !accessToken) {
-      const message = "Connexion requise pour synchroniser.";
-      setScanSyncError(message);
-      throw new Error(message);
-    }
+    return syncScansInternal({ includeImages: true });
+  }, [syncScansInternal]);
 
-    setIsScanSyncing(true);
-    setScanSyncError(null);
-
-    try {
-      const pendingScans = await loadInventoryScans({ isSynced: false });
-      if (pendingScans.length === 0) {
-        return { totalCount: 0, syncedCount: 0, failedCount: 0 };
-      }
-
-      const syncUpdates: InventoryScanSyncUpdateInput[] = [];
-      const errorDetails: string[] = [];
-      let failedCount = 0;
-
-      for (const batch of chunkItems(pendingScans, SCAN_SYNC_BATCH_SIZE)) {
-        const input: InventoryScanSyncInput[] = [];
-        const syncBatchScans: InventoryScanRecord[] = [];
-
-        for (const scan of batch) {
-          try {
-            const payload = await buildScanSyncInput(scan);
-            input.push(payload);
-            syncBatchScans.push(scan);
-          } catch (error) {
-            failedCount += 1;
-            const message =
-              error instanceof Error
-                ? error.message
-                : "Preparation image impossible.";
-            errorDetails.push(`${scan.codeArticle}: ${message}`);
-          }
-        }
-
-        if (input.length === 0) {
-          continue;
-        }
-
-        const response = await client.mutate<
-          SyncInventoryScansData,
-          SyncInventoryScansVariables
-        >({
-          mutation: SYNC_INVENTORY_SCANS_MUTATION,
-          variables: { input },
-          fetchPolicy: "no-cache",
-        });
-
-        const results = response.data?.sync_inventory_scans?.results ?? [];
-        const resultMap = new Map(
-          results.map((result) => [result.local_id, result])
-        );
-
-        for (const scan of syncBatchScans) {
-          const result = resultMap.get(scan.id);
-          if (result?.ok && result.remote_id) {
-            syncUpdates.push({
-              id: scan.id,
-              remoteId: result.remote_id,
-              syncedWithoutImage: false,
-            });
-          } else {
-            failedCount += 1;
-            const reason =
-              result?.errors && result.errors.length > 0
-                ? result.errors.join(", ")
-                : "Reponse manquante.";
-            errorDetails.push(`${scan.codeArticle}: ${reason}`);
-          }
-        }
-      }
-
-      if (syncUpdates.length > 0) {
-        await markInventoryScansSynced(syncUpdates);
-      }
-
-      if (errorDetails.length > 0) {
-        const sample = errorDetails.slice(0, 3).join(" | ");
-        const suffix =
-          errorDetails.length > 3
-            ? ` (+${errorDetails.length - 3} autres)`
-            : "";
-        setScanSyncError(`Echecs de sync: ${sample}${suffix}`);
-      }
-
-      const syncedCount = syncUpdates.length;
-      return {
-        totalCount: pendingScans.length,
-        syncedCount,
-        failedCount,
-        errors: errorDetails.length > 0 ? errorDetails : undefined,
-      };
-    } catch (error) {
-      const message =
-        error instanceof ApolloError
-          ? getApolloErrorMessage(error)
-          : error instanceof Error
-          ? error.message
-          : "La synchronisation des scans a echoue.";
-      setScanSyncError(message);
-      throw new Error(message);
-    } finally {
-      setIsScanSyncing(false);
-    }
-  }, [accessToken, client, isAuthenticated]);
+  /** Upload local scan records without images. */
+  const syncScansWithoutImages = useCallback(
+    async (): Promise<InventoryScanSyncSummary> => {
+      return syncScansInternal({ includeImages: false });
+    },
+    [syncScansInternal]
+  );
 
   const contextValue = useMemo<InventoryOfflineContextValue>(
     () => ({
@@ -833,6 +857,7 @@ export function InventoryOfflineProvider({
       syncScanImageById,
       syncScanById,
       syncScans,
+      syncScansWithoutImages,
     }),
     [
       cache,
@@ -846,6 +871,7 @@ export function InventoryOfflineProvider({
       syncScanImageById,
       syncScanById,
       syncScans,
+      syncScansWithoutImages,
     ]
   );
 
