@@ -2512,6 +2512,7 @@ export default function ScanScreen() {
           <Pressable
             style={[
               styles.modalCard,
+              styles.manualModalCard,
               {
                 backgroundColor: PREMIUM_COLORS.gradient_start,
                 borderColor: PREMIUM_COLORS.glass_border,
@@ -3134,6 +3135,9 @@ const styles = StyleSheet.create({
     minHeight: "65%",
     justifyContent: "space-between",
     gap: 20,
+  },
+  manualModalCard: {
+    maxHeight: "90%",
   },
   manualFormScroll: {
     flex: 1,

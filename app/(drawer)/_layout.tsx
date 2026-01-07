@@ -569,7 +569,9 @@ export default function DrawerLayout() {
             </View>
             <View style={styles.drawer_header_text}>
               <Text style={styles.drawer_header_title}>Inventaire</Text>
-              <Text style={styles.drawer_header_subtitle}>Rail Logistic</Text>
+              <Text style={styles.drawer_header_subtitle}>
+                Rail Logistic v1.0.5
+              </Text>
             </View>
           </View>
 

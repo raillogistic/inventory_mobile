@@ -20,7 +20,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import JSZip from "jszip";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -421,23 +421,53 @@ export default function ArticlesSyncScreen() {
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const filename = `inventory-scans-${timestamp}.zip`;
       const baseDirectory =
-        FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+        FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
+      let shareUri: string | null = null;
 
-      if (!baseDirectory) {
+      if (baseDirectory) {
+        const fileUri = `${baseDirectory}${filename}`;
+
+        await FileSystem.writeAsStringAsync(fileUri, zipBase64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        shareUri =
+          Platform.OS === "android"
+            ? await FileSystem.getContentUriAsync(fileUri)
+            : fileUri;
+      } else if (
+        Platform.OS === "android" &&
+        FileSystem.StorageAccessFramework?.requestDirectoryPermissionsAsync
+      ) {
+        const permission =
+          await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+
+        if (!permission.granted) {
+          showSyncMessage("Acces au stockage refuse.");
+          return;
+        }
+
+        const targetUri =
+          await FileSystem.StorageAccessFramework.createFileAsync(
+            permission.directoryUri,
+            filename,
+            "application/zip"
+          );
+
+        await FileSystem.writeAsStringAsync(targetUri, zipBase64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        shareUri = targetUri;
+      } else {
         showSyncMessage("Stockage indisponible.");
         return;
       }
 
-      const fileUri = `${baseDirectory}${filename}`;
-
-      await FileSystem.writeAsStringAsync(fileUri, zipBase64, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      const shareUri =
-        Platform.OS === "android"
-          ? await FileSystem.getContentUriAsync(fileUri)
-          : fileUri;
+      if (!shareUri) {
+        showSyncMessage("Stockage indisponible.");
+        return;
+      }
 
       await Share.share({
         url: shareUri,
