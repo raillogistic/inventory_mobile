@@ -3,7 +3,7 @@
  * Affiche les scans en attente de synchronisation et les scans synchronisés.
  */
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -104,12 +104,15 @@ function getStatusColor(status: string | undefined): string {
  * Écran de synchronisation des articles avec design premium.
  */
 export default function ArticlesSyncScreen() {
-  const { isScanSyncing, scanSyncError, syncScans } = useInventoryOffline();
+  const { isScanSyncing, scanSyncError, syncScanById, syncScans } =
+    useInventoryOffline();
   const [activeTab, setActiveTab] = useState<SyncTabId>("pending");
   const [pendingScans, setPendingScans] = useState<InventoryScanRecord[]>([]);
   const [syncedScans, setSyncedScans] = useState<InventoryScanRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** Local scan id currently syncing. */
+  const [syncingScanId, setSyncingScanId] = useState<string | null>(null);
 
   /** Affiche un toast ou une alerte pour le feedback. */
   const showSyncMessage = useCallback((message: string) => {
@@ -119,7 +122,7 @@ export default function ArticlesSyncScreen() {
     }
 
     Alert.alert("Synchronisation", message);
-  }, []);
+  }, [handleSyncItem, handleSyncItemNoImage, isScanSyncing, syncingScanId]);
 
   /** Charge les scans groupés par état de sync. */
   const loadScans = useCallback(async () => {
@@ -141,7 +144,7 @@ export default function ArticlesSyncScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [handleSyncItem, isScanSyncing, syncingScanId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -190,11 +193,104 @@ export default function ArticlesSyncScreen() {
     }
   }, [isScanSyncing, loadScans, showSyncMessage, syncScans]);
 
+  /**
+   * Sync a single scan record by id.
+   * @param scanId - Scan identifier.
+   */
+  const handleSyncItem = useCallback(
+    async (scanId: string) => {
+      if (isScanSyncing) {
+        return;
+      }
+
+      setSyncingScanId(scanId);
+
+      try {
+        const summary = await syncScanById(scanId);
+        await loadScans();
+
+        if (summary.totalCount === 0) {
+          showSyncMessage("Aucun article a synchroniser.");
+          return;
+        }
+
+        if (summary.failedCount === 0) {
+          showSyncMessage("Article synchronise.");
+          return;
+        }
+
+        const errorSummary =
+          summary.errors && summary.errors.length > 0
+            ? ` (${summary.errors.slice(0, 1).join(" | ")})`
+            : "";
+        showSyncMessage(
+          `${summary.syncedCount}/${summary.totalCount} article synchronise.${errorSummary}`
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "La synchronisation a echoue.";
+        showSyncMessage(message);
+      } finally {
+        setSyncingScanId(null);
+      }
+    },
+    [isScanSyncing, loadScans, showSyncMessage, syncScanById]
+  );
+
+  /**
+   * Sync a single scan record without its image payload.
+   * @param scanId - Scan identifier.
+   */
+  const handleSyncItemNoImage = useCallback(
+    async (scanId: string) => {
+      if (isScanSyncing) {
+        return;
+      }
+
+      setSyncingScanId(scanId);
+
+      try {
+        const summary = await syncScanById(scanId, { includeImages: false });
+        await loadScans();
+
+        if (summary.totalCount === 0) {
+          showSyncMessage("Aucun article a synchroniser.");
+          return;
+        }
+
+        if (summary.failedCount === 0) {
+          showSyncMessage("Article synchronise sans image.");
+          return;
+        }
+
+        const errorSummary =
+          summary.errors && summary.errors.length > 0
+            ? ` (${summary.errors.slice(0, 1).join(" | ")})`
+            : "";
+        showSyncMessage(
+          `${summary.syncedCount}/${summary.totalCount} article synchronise sans image.${errorSummary}`
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "La synchronisation a echoue.";
+        showSyncMessage(message);
+      } finally {
+        setSyncingScanId(null);
+      }
+    },
+    [isScanSyncing, loadScans, showSyncMessage, syncScanById]
+  );
+
   const activeScans = activeTab === "pending" ? pendingScans : syncedScans;
 
   /** Rend une ligne de scan. */
   const renderItem = useCallback(({ item }: { item: InventoryScanRecord }) => {
     const accentColor = getStatusColor(item.status);
+    const isItemSyncing = syncingScanId === item.id && isScanSyncing;
     return (
       <View style={styles.scan_card}>
         {/* Barre d'accent */}
@@ -273,9 +369,56 @@ export default function ArticlesSyncScreen() {
                   },
                 ]}
               >
-                {item.isSynced ? "Synchronisé" : "En attente"}
+                {item.isSynced ? "Synchronise" : "En attente"}
               </Text>
             </View>
+            {!item.isSynced && (
+              <View style={styles.item_sync_actions}>
+                <TouchableOpacity
+                  style={[
+                    styles.item_sync_button,
+                    isItemSyncing && styles.item_sync_button_disabled,
+                  ]}
+                  onPress={() => handleSyncItem(item.id)}
+                  disabled={isScanSyncing}
+                  activeOpacity={0.7}
+                >
+                  {isItemSyncing ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={PREMIUM_COLORS.accent_primary}
+                    />
+                  ) : (
+                    <IconSymbol
+                      name="arrow.clockwise"
+                      size={14}
+                      color={PREMIUM_COLORS.accent_primary}
+                    />
+                  )}
+                  <Text style={styles.item_sync_button_text}>Sync</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.item_sync_button,
+                    styles.item_sync_button_secondary,
+                    isItemSyncing && styles.item_sync_button_disabled,
+                  ]}
+                  onPress={() => handleSyncItemNoImage(item.id)}
+                  disabled={isScanSyncing}
+                  activeOpacity={0.7}
+                >
+                  <IconSymbol
+                    name="photo.slash"
+                    size={14}
+                    color={PREMIUM_COLORS.text_muted}
+                  />
+                  <Text style={styles.item_sync_button_secondary_text}>
+                    Sans image
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
           </View>
         </View>
       </View>
@@ -736,6 +879,41 @@ const styles = StyleSheet.create({
   sync_status_text: {
     fontSize: 11,
     fontWeight: "500",
+  },
+  item_sync_actions: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  item_sync_button: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: PREMIUM_COLORS.accent_primary,
+    backgroundColor: "rgba(255, 107, 0, 0.08)",
+  },
+  item_sync_button_disabled: {
+    opacity: 0.6,
+  },
+  item_sync_button_text: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: PREMIUM_COLORS.accent_primary,
+  },
+  item_sync_button_secondary: {
+    borderColor: PREMIUM_COLORS.glass_border,
+    backgroundColor: PREMIUM_COLORS.glass_bg,
+  },
+  item_sync_button_secondary_text: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: PREMIUM_COLORS.text_muted,
   },
   /* État vide */
   empty_container: {

@@ -19,6 +19,7 @@
       }
     },
     "android": {
+      "versionCode": 2,
       "icon": "./assets/images/app-logo.png",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -89,7 +90,9 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/3f7943ff-88e8-43ef-a341-fbd085d7895f"
+      "url": "https://u.expo.dev/3f7943ff-88e8-43ef-a341-fbd085d7895f",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     }
   }
 }

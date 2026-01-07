@@ -297,6 +297,24 @@ export async function loadInventoryScans(
 }
 
 /**
+ * Load a single scan record by identifier.
+ */
+export async function loadInventoryScanById(
+  id: string
+): Promise<InventoryScanRecord | null> {
+  await ensureInventoryDatabase();
+  const sql =
+    "SELECT id, remote_id, campagne_id, groupe_id, lieu_id, lieu_name, latitude, longitude, code_article, " +
+    "article_id, article_desc, observation, commentaire, custom_desc, serial_number, etat, capture_le, source_scan, " +
+    "image_uri, image_uri2, image_uri3, status, status_label, is_synced, updated_at " +
+    "FROM inventory_scans WHERE id = ? LIMIT 1";
+
+  const result = await runInventorySql<InventoryScanRow>(sql, [id]);
+  const rows = getInventorySqlRows(result);
+  return rows.length > 0 ? mapInventoryScanRow(rows[0]) : null;
+}
+
+/**
  * Create a new scan record in SQLite.
  */
 export async function createInventoryScan(
