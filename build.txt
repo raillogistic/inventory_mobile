@@ -2,6 +2,11 @@ eas login
 eas build:configure --platform android
 eas build -p android --profile preview
 
+
+# push update with eas
+eas update --channel master --platform android --message "test update"
+
+
 npx expo prebuild
 cd android
 ./gradlew assembleDebug

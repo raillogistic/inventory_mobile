@@ -9,6 +9,7 @@ import {
   Alert,
   FlatList,
   Platform,
+  Share,
   StyleSheet,
   Text,
   ToastAndroid,
@@ -19,6 +20,8 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
+import * as FileSystem from "expo-file-system";
+import JSZip from "jszip";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import {
@@ -101,6 +104,43 @@ function getStatusColor(status: string | undefined): string {
 }
 
 /**
+ * Extract a filename from a file URI if possible.
+ * @param uri - Local file URI.
+ * @returns File name or null.
+ */
+function getFileNameFromUri(uri: string): string | null {
+  const trimmed = uri.split("?")[0] ?? "";
+  const parts = trimmed.split("/");
+  return parts.length > 0 ? parts[parts.length - 1] ?? null : null;
+}
+
+/**
+ * Sanitize a filename for safe zip entries.
+ * @param value - Raw filename value.
+ * @returns Sanitized filename.
+ */
+function sanitizeFileName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+/**
+ * Build a zip entry name for an image file.
+ * @param scanId - Scan identifier.
+ * @param uri - Local file URI.
+ * @param index - Image index.
+ * @returns Zip-safe filename.
+ */
+function buildZipImageName(scanId: string, uri: string, index: number): string {
+  const rawName = getFileNameFromUri(uri);
+  const safeBase =
+    rawName && rawName.trim().length > 0
+      ? sanitizeFileName(rawName)
+      : `scan-${sanitizeFileName(scanId)}-${index}.jpg`;
+
+  return safeBase.includes(".") ? safeBase : `${safeBase}.jpg`;
+}
+
+/**
  * Écran de synchronisation des articles avec design premium.
  */
 export default function ArticlesSyncScreen() {
@@ -119,22 +159,27 @@ export default function ArticlesSyncScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   /** Local scan id currently syncing. */
   const [syncingScanId, setSyncingScanId] = useState<string | null>(null);
+  /** Whether a zip export is in progress. */
+  const [isExportingZip, setIsExportingZip] = useState(false);
 
   /** Affiche un toast ou une alerte pour le feedback. */
-  const showSyncMessage = useCallback((message: string) => {
-    if (Platform.OS === "android") {
-      ToastAndroid.show(message, ToastAndroid.SHORT);
-      return;
-    }
+  const showSyncMessage = useCallback(
+    (message: string) => {
+      if (Platform.OS === "android") {
+        ToastAndroid.show(message, ToastAndroid.SHORT);
+        return;
+      }
 
-    Alert.alert("Synchronisation", message);
-  }, [
-    handleSyncItem,
-    handleSyncItemImageOnly,
-    handleSyncItemNoImage,
-    isScanSyncing,
-    syncingScanId,
-  ]);
+      Alert.alert("Synchronisation", message);
+    },
+    [
+      handleSyncItem,
+      handleSyncItemImageOnly,
+      handleSyncItemNoImage,
+      isScanSyncing,
+      syncingScanId,
+    ]
+  );
 
   /** Charge les scans groupés par état de sync. */
   const loadScans = useCallback(async () => {
@@ -242,6 +287,146 @@ export default function ArticlesSyncScreen() {
       showSyncMessage(message);
     }
   }, [isScanSyncing, loadScans, showSyncMessage, syncScansWithoutImages]);
+
+  /**
+   * Export all scans and their images as a zip archive.
+   */
+  const handleExportZip = useCallback(async () => {
+    if (isExportingZip) {
+      return;
+    }
+
+    setIsExportingZip(true);
+
+    try {
+      const [pending, synced] = await Promise.all([
+        loadInventoryScans({ isSynced: false }),
+        loadInventoryScans({ isSynced: true }),
+      ]);
+      const scans = [...pending, ...synced];
+
+      if (scans.length === 0) {
+        showSyncMessage("Aucun scan a exporter.");
+        return;
+      }
+
+      const zip = new JSZip();
+      const imagesFolder = zip.folder("images");
+      let imageCount = 0;
+
+      const exportRows = [];
+
+      for (const scan of scans) {
+        const imageUris = [
+          scan.imageUri,
+          scan.imageUri2,
+          scan.imageUri3,
+        ].filter((uri): uri is string => Boolean(uri));
+        const imageFiles: string[] = [];
+
+        for (let index = 0; index < imageUris.length; index += 1) {
+          const uri = imageUris[index];
+          try {
+            const info = await FileSystem.getInfoAsync(uri);
+            if (!info.exists) {
+              continue;
+            }
+
+            const base64 = await FileSystem.readAsStringAsync(uri, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+
+            if (!base64) {
+              continue;
+            }
+
+            const filename = buildZipImageName(scan.id, uri, index + 1);
+            imagesFolder?.file(filename, base64, { base64: true });
+            imageFiles.push(`images/${filename}`);
+            imageCount += 1;
+          } catch {
+            continue;
+          }
+        }
+
+        exportRows.push({
+          id: scan.id,
+          remoteId: scan.remoteId,
+          campaignId: scan.campaignId,
+          groupId: scan.groupId,
+          locationId: scan.locationId,
+          locationName: scan.locationName,
+          latitude: scan.latitude,
+          longitude: scan.longitude,
+          codeArticle: scan.codeArticle,
+          articleId: scan.articleId,
+          articleDescription: scan.articleDescription,
+          observation: scan.observation,
+          customDesc: scan.customDesc,
+          serialNumber: scan.serialNumber,
+          etat: scan.etat,
+          capturedAt: scan.capturedAt,
+          sourceScan: scan.sourceScan,
+          status: scan.status,
+          statusLabel: scan.statusLabel,
+          isSynced: scan.isSynced,
+          syncedWithoutImage: scan.syncedWithoutImage,
+          images: imageFiles,
+        });
+      }
+
+      zip.file(
+        "scans.json",
+        JSON.stringify(
+          {
+            generatedAt: new Date().toISOString(),
+            totalScans: scans.length,
+            totalImages: imageCount,
+            scans: exportRows,
+          },
+          null,
+          2
+        )
+      );
+
+      const zipBase64 = await zip.generateAsync({ type: "base64" });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const filename = `inventory-scans-${timestamp}.zip`;
+      const baseDirectory =
+        FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+
+      if (!baseDirectory) {
+        showSyncMessage("Stockage indisponible.");
+        return;
+      }
+
+      const fileUri = `${baseDirectory}${filename}`;
+
+      await FileSystem.writeAsStringAsync(fileUri, zipBase64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const shareUri =
+        Platform.OS === "android"
+          ? await FileSystem.getContentUriAsync(fileUri)
+          : fileUri;
+
+      await Share.share({
+        url: shareUri,
+        title: filename,
+      });
+
+      showSyncMessage(
+        `${scans.length} scan(s) exportes, ${imageCount} image(s).`
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Export zip impossible.";
+      showSyncMessage(message);
+    } finally {
+      setIsExportingZip(false);
+    }
+  }, [isExportingZip, showSyncMessage]);
 
   /**
    * Sync a single scan record by id.
@@ -541,7 +726,6 @@ export default function ArticlesSyncScreen() {
                 </TouchableOpacity>
               </View>
             )}
-
           </View>
         </View>
       </View>
@@ -563,9 +747,7 @@ export default function ArticlesSyncScreen() {
                 />
               </View>
               <View style={styles.header_text}>
-                <Text style={styles.header_title}>
-                  Articles à synchroniser*
-                </Text>
+                <Text style={styles.header_title}>Articles à synchroniser</Text>
                 <Text style={styles.header_subtitle}>
                   {pendingScans.length} en attente • {syncedScans.length}{" "}
                   synchronisés
@@ -644,15 +826,16 @@ export default function ArticlesSyncScreen() {
                 <TouchableOpacity
                   style={[
                     styles.sync_button,
-                    isScanSyncing && styles.sync_button_disabled,
+                    (isScanSyncing || isExportingZip) &&
+                      styles.sync_button_disabled,
                   ]}
                   onPress={handleSyncNow}
-                  disabled={isScanSyncing}
+                  disabled={isScanSyncing || isExportingZip}
                   activeOpacity={0.7}
                 >
                   <LinearGradient
                     colors={
-                      isScanSyncing
+                      isScanSyncing || isExportingZip
                         ? [PREMIUM_COLORS.glass_bg, PREMIUM_COLORS.glass_bg]
                         : [
                             PREMIUM_COLORS.accent_primary,
@@ -678,10 +861,11 @@ export default function ArticlesSyncScreen() {
                 <TouchableOpacity
                   style={[
                     styles.sync_button_secondary,
-                    isScanSyncing && styles.sync_button_disabled,
+                    (isScanSyncing || isExportingZip) &&
+                      styles.sync_button_disabled,
                   ]}
                   onPress={handleSyncNowNoImage}
-                  disabled={isScanSyncing}
+                  disabled={isScanSyncing || isExportingZip}
                   activeOpacity={0.7}
                 >
                   <View style={styles.sync_button_secondary_content}>
@@ -692,6 +876,34 @@ export default function ArticlesSyncScreen() {
                     />
                     <Text style={styles.sync_button_secondary_text}>
                       Synchroniser sans image
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.sync_button_secondary,
+                    (isScanSyncing || isExportingZip) &&
+                      styles.sync_button_disabled,
+                  ]}
+                  onPress={handleExportZip}
+                  disabled={isScanSyncing || isExportingZip}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.sync_button_secondary_content}>
+                    {isExportingZip ? (
+                      <ActivityIndicator
+                        size="small"
+                        color={PREMIUM_COLORS.accent_primary}
+                      />
+                    ) : (
+                      <IconSymbol
+                        name="tray.and.arrow.down"
+                        size={16}
+                        color={PREMIUM_COLORS.text_muted}
+                      />
+                    )}
+                    <Text style={styles.sync_button_secondary_text}>
+                      {isExportingZip ? "Export..." : "Telecharger ZIP"}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -734,10 +946,12 @@ export default function ArticlesSyncScreen() {
     );
   }, [
     activeTab,
+    handleExportZip,
     handleSyncNow,
     handleSyncNowNoImage,
     handleTabChange,
     isLoading,
+    isExportingZip,
     isScanSyncing,
     loadError,
     pendingScans.length,
