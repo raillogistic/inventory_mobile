@@ -149,8 +149,6 @@ export default function ArticlesSyncScreen() {
     scanSyncError,
     syncScanById,
     syncScanImageById,
-    syncScans,
-    syncScansWithoutImages,
   } = useInventoryOffline();
   const [activeTab, setActiveTab] = useState<SyncTabId>("pending");
   const [pendingScans, setPendingScans] = useState<InventoryScanRecord[]>([]);
@@ -161,25 +159,18 @@ export default function ArticlesSyncScreen() {
   const [syncingScanId, setSyncingScanId] = useState<string | null>(null);
   /** Whether a zip export is in progress. */
   const [isExportingZip, setIsExportingZip] = useState(false);
+  /** Whether a bulk sync is in progress. */
+  const [isBulkSyncing, setIsBulkSyncing] = useState(false);
 
   /** Affiche un toast ou une alerte pour le feedback. */
-  const showSyncMessage = useCallback(
-    (message: string) => {
-      if (Platform.OS === "android") {
-        ToastAndroid.show(message, ToastAndroid.SHORT);
-        return;
-      }
+  const showSyncMessage = useCallback((message: string) => {
+    if (Platform.OS === "android") {
+      ToastAndroid.show(message, ToastAndroid.SHORT);
+      return;
+    }
 
-      Alert.alert("Synchronisation", message);
-    },
-    [
-      handleSyncItem,
-      handleSyncItemImageOnly,
-      handleSyncItemNoImage,
-      isScanSyncing,
-      syncingScanId,
-    ]
-  );
+    Alert.alert("Synchronisation", message);
+  }, []);
 
   /** Charge les scans groupés par état de sync. */
   const loadScans = useCallback(async () => {
@@ -201,7 +192,7 @@ export default function ArticlesSyncScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [handleSyncItem, isScanSyncing, syncingScanId]);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -214,85 +205,122 @@ export default function ArticlesSyncScreen() {
     setActiveTab(tab);
   }, []);
 
-  /** Lance la synchronisation. */
-  const handleSyncNow = useCallback(async () => {
-    if (isScanSyncing) {
-      return;
-    }
-
-    try {
-      const summary = await syncScans();
-      await loadScans();
-
-      if (summary.totalCount === 0) {
-        showSyncMessage("Aucun article à synchroniser.");
+  /**
+   * Bulk sync helper with optional image inclusion.
+   * @param includeImages - Whether to include images.
+   */
+  const handleBulkSync = useCallback(
+    async (includeImages: boolean) => {
+      if (isScanSyncing || isExportingZip || isBulkSyncing) {
         return;
       }
 
-      if (summary.failedCount === 0) {
-        showSyncMessage(`${summary.syncedCount} article(s) synchronisé(s).`);
-        return;
-      }
-
-      const errorSummary =
-        summary.errors && summary.errors.length > 0
-          ? ` (${summary.errors.slice(0, 2).join(" | ")}${
-              summary.errors.length > 2 ? " +..." : ""
-            })`
-          : "";
-      showSyncMessage(
-        `${summary.syncedCount}/${summary.totalCount} articles synchronisés.${errorSummary}`
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "La synchronisation a échoué.";
-      showSyncMessage(message);
-    }
-  }, [isScanSyncing, loadScans, showSyncMessage, syncScans]);
-
-  /** Lance la synchronisation sans images. */
-  const handleSyncNowNoImage = useCallback(async () => {
-    if (isScanSyncing) {
-      return;
-    }
-
-    try {
-      const summary = await syncScansWithoutImages();
-      await loadScans();
-
-      if (summary.totalCount === 0) {
+      const scansToSync = [...pendingScans];
+      if (scansToSync.length === 0) {
         showSyncMessage("Aucun article a synchroniser.");
         return;
       }
 
-      if (summary.failedCount === 0) {
-        showSyncMessage(
-          `${summary.syncedCount} article(s) synchronise(s) sans image.`
-        );
-        return;
-      }
+      setIsBulkSyncing(true);
+      let syncedCount = 0;
+      let failedCount = 0;
+      const errorDetails: string[] = [];
 
-      const errorSummary =
-        summary.errors && summary.errors.length > 0
-          ? ` (${summary.errors.slice(0, 2).join(" | ")}${
-              summary.errors.length > 2 ? " +..." : ""
-            })`
-          : "";
-      showSyncMessage(
-        `${summary.syncedCount}/${summary.totalCount} articles synchronises sans image.${errorSummary}`
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "La synchronisation a echoue.";
-      showSyncMessage(message);
-    }
-  }, [isScanSyncing, loadScans, showSyncMessage, syncScansWithoutImages]);
+      try {
+        for (const scan of scansToSync) {
+          setSyncingScanId(scan.id);
+          try {
+            const summary = await syncScanById(scan.id, { includeImages });
+            if (summary.failedCount === 0 && summary.syncedCount > 0) {
+              syncedCount += 1;
+              const updatedScan: InventoryScanRecord = {
+                ...scan,
+                isSynced: true,
+                syncedWithoutImage: !includeImages,
+              };
+              setPendingScans((prev) =>
+                prev.filter((item) => item.id !== scan.id)
+              );
+              setSyncedScans((prev) =>
+                [...prev, updatedScan].sort(
+                  (a, b) =>
+                    new Date(b.capturedAt).getTime() -
+                    new Date(a.capturedAt).getTime()
+                )
+              );
+            } else {
+              failedCount += 1;
+              if (summary.errors && summary.errors.length > 0) {
+                errorDetails.push(...summary.errors);
+              }
+            }
+          } catch (error) {
+            failedCount += 1;
+            const message =
+              error instanceof Error
+                ? error.message
+                : "La synchronisation a echoue.";
+            errorDetails.push(`${scan.codeArticle}: ${message}`);
+          }
+        }
+
+        try {
+          await loadScans();
+        } catch {
+          // Keep local progress if refresh fails.
+        }
+
+        if (failedCount === 0) {
+          const suffix = includeImages ? "" : " sans image";
+          showSyncMessage(
+            `${syncedCount} article(s) synchronise(s)${suffix}.`
+          );
+          return;
+        }
+
+        const errorSummary =
+          errorDetails.length > 0
+            ? ` (${errorDetails.slice(0, 2).join(" | ")}${
+                errorDetails.length > 2 ? " +..." : ""
+              })`
+            : "";
+        const label = includeImages
+          ? "articles synchronises"
+          : "articles synchronises sans image";
+        showSyncMessage(
+          `${syncedCount}/${scansToSync.length} ${label}.${errorSummary}`
+        );
+      } finally {
+        setSyncingScanId(null);
+        setIsBulkSyncing(false);
+      }
+    },
+    [
+      isBulkSyncing,
+      isExportingZip,
+      isScanSyncing,
+      loadScans,
+      pendingScans,
+      showSyncMessage,
+      syncScanById,
+    ]
+  );
+
+  /** Lance la synchronisation. */
+  const handleSyncNow = useCallback(async () => {
+    await handleBulkSync(true);
+  }, [handleBulkSync]);
+
+  /** Lance la synchronisation sans images. */
+  const handleSyncNowNoImage = useCallback(async () => {
+    await handleBulkSync(false);
+  }, [handleBulkSync]);
 
   /**
    * Export all scans and their images as a zip archive.
    */
   const handleExportZip = useCallback(async () => {
-    if (isExportingZip) {
+    if (isExportingZip || isBulkSyncing || isScanSyncing) {
       return;
     }
 
@@ -426,7 +454,7 @@ export default function ArticlesSyncScreen() {
     } finally {
       setIsExportingZip(false);
     }
-  }, [isExportingZip, showSyncMessage]);
+  }, [isBulkSyncing, isExportingZip, isScanSyncing, showSyncMessage]);
 
   /**
    * Sync a single scan record by id.
@@ -434,7 +462,7 @@ export default function ArticlesSyncScreen() {
    */
   const handleSyncItem = useCallback(
     async (scanId: string) => {
-      if (isScanSyncing) {
+      if (isScanSyncing || isBulkSyncing || isExportingZip) {
         return;
       }
 
@@ -471,7 +499,7 @@ export default function ArticlesSyncScreen() {
         setSyncingScanId(null);
       }
     },
-    [isScanSyncing, loadScans, showSyncMessage, syncScanById]
+    [isBulkSyncing, isExportingZip, isScanSyncing, loadScans, showSyncMessage, syncScanById]
   );
 
   /**
@@ -480,7 +508,7 @@ export default function ArticlesSyncScreen() {
    */
   const handleSyncItemNoImage = useCallback(
     async (scanId: string) => {
-      if (isScanSyncing) {
+      if (isScanSyncing || isBulkSyncing || isExportingZip) {
         return;
       }
 
@@ -517,7 +545,7 @@ export default function ArticlesSyncScreen() {
         setSyncingScanId(null);
       }
     },
-    [isScanSyncing, loadScans, showSyncMessage, syncScanById]
+    [isBulkSyncing, isExportingZip, isScanSyncing, loadScans, showSyncMessage, syncScanById]
   );
 
   /**
@@ -526,7 +554,7 @@ export default function ArticlesSyncScreen() {
    */
   const handleSyncItemImageOnly = useCallback(
     async (scanId: string) => {
-      if (isScanSyncing) {
+      if (isScanSyncing || isBulkSyncing || isExportingZip) {
         return;
       }
 
@@ -563,7 +591,7 @@ export default function ArticlesSyncScreen() {
         setSyncingScanId(null);
       }
     },
-    [isScanSyncing, loadScans, showSyncMessage, syncScanImageById]
+    [isBulkSyncing, isExportingZip, isScanSyncing, loadScans, showSyncMessage, syncScanImageById]
   );
 
   const activeScans = activeTab === "pending" ? pendingScans : syncedScans;
@@ -661,7 +689,7 @@ export default function ArticlesSyncScreen() {
                     isItemSyncing && styles.item_sync_button_disabled,
                   ]}
                   onPress={() => handleSyncItem(item.id)}
-                  disabled={isScanSyncing}
+                  disabled={isScanSyncing || isBulkSyncing}
                   activeOpacity={0.7}
                 >
                   {isItemSyncing ? (
@@ -685,7 +713,7 @@ export default function ArticlesSyncScreen() {
                     isItemSyncing && styles.item_sync_button_disabled,
                   ]}
                   onPress={() => handleSyncItemNoImage(item.id)}
-                  disabled={isScanSyncing}
+                  disabled={isScanSyncing || isBulkSyncing}
                   activeOpacity={0.7}
                 >
                   <IconSymbol
@@ -707,7 +735,7 @@ export default function ArticlesSyncScreen() {
                     isItemSyncing && styles.item_sync_button_disabled,
                   ]}
                   onPress={() => handleSyncItemImageOnly(item.id)}
-                  disabled={isScanSyncing}
+                  disabled={isScanSyncing || isBulkSyncing}
                   activeOpacity={0.7}
                 >
                   {isItemSyncing ? (
@@ -826,16 +854,16 @@ export default function ArticlesSyncScreen() {
                 <TouchableOpacity
                   style={[
                     styles.sync_button,
-                    (isScanSyncing || isExportingZip) &&
+                    (isScanSyncing || isExportingZip || isBulkSyncing) &&
                       styles.sync_button_disabled,
                   ]}
                   onPress={handleSyncNow}
-                  disabled={isScanSyncing || isExportingZip}
+                  disabled={isScanSyncing || isExportingZip || isBulkSyncing}
                   activeOpacity={0.7}
                 >
                   <LinearGradient
                     colors={
-                      isScanSyncing || isExportingZip
+                      isScanSyncing || isExportingZip || isBulkSyncing
                         ? [PREMIUM_COLORS.glass_bg, PREMIUM_COLORS.glass_bg]
                         : [
                             PREMIUM_COLORS.accent_primary,
@@ -852,7 +880,7 @@ export default function ArticlesSyncScreen() {
                       color={PREMIUM_COLORS.text_primary}
                     />
                     <Text style={styles.sync_button_text}>
-                      {isScanSyncing
+                      {isScanSyncing || isBulkSyncing
                         ? "Synchronisation..."
                         : "Synchroniser maintenant"}
                     </Text>
@@ -861,11 +889,11 @@ export default function ArticlesSyncScreen() {
                 <TouchableOpacity
                   style={[
                     styles.sync_button_secondary,
-                    (isScanSyncing || isExportingZip) &&
+                    (isScanSyncing || isExportingZip || isBulkSyncing) &&
                       styles.sync_button_disabled,
                   ]}
                   onPress={handleSyncNowNoImage}
-                  disabled={isScanSyncing || isExportingZip}
+                  disabled={isScanSyncing || isExportingZip || isBulkSyncing}
                   activeOpacity={0.7}
                 >
                   <View style={styles.sync_button_secondary_content}>
@@ -882,11 +910,11 @@ export default function ArticlesSyncScreen() {
                 <TouchableOpacity
                   style={[
                     styles.sync_button_secondary,
-                    (isScanSyncing || isExportingZip) &&
+                    (isScanSyncing || isExportingZip || isBulkSyncing) &&
                       styles.sync_button_disabled,
                   ]}
                   onPress={handleExportZip}
-                  disabled={isScanSyncing || isExportingZip}
+                  disabled={isScanSyncing || isExportingZip || isBulkSyncing}
                   activeOpacity={0.7}
                 >
                   <View style={styles.sync_button_secondary_content}>
@@ -951,6 +979,7 @@ export default function ArticlesSyncScreen() {
     handleSyncNowNoImage,
     handleTabChange,
     isLoading,
+    isBulkSyncing,
     isExportingZip,
     isScanSyncing,
     loadError,

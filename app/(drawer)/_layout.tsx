@@ -546,76 +546,76 @@ export default function DrawerLayout() {
       };
 
       return (
-      <View style={styles.drawer_container}>
-        <LinearGradient
-          colors={[
-            COLORS.gradient_start,
-            COLORS.gradient_mid,
-            COLORS.gradient_end,
-          ]}
-          style={styles.drawer_gradient}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0.5, y: 1 }}
-        />
+        <View style={styles.drawer_container}>
+          <LinearGradient
+            colors={[
+              COLORS.gradient_start,
+              COLORS.gradient_mid,
+              COLORS.gradient_end,
+            ]}
+            style={styles.drawer_gradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0.5, y: 1 }}
+          />
 
-        {/* En-tête du drawer */}
-        <View style={styles.drawer_header}>
-          <View style={styles.drawer_header_icon}>
-            <IconSymbol
-              name="shippingbox.fill"
-              size={28}
-              color={COLORS.accent_primary}
+          {/* En-tête du drawer */}
+          <View style={styles.drawer_header}>
+            <View style={styles.drawer_header_icon}>
+              <IconSymbol
+                name="shippingbox.fill"
+                size={28}
+                color={COLORS.accent_primary}
+              />
+            </View>
+            <View style={styles.drawer_header_text}>
+              <Text style={styles.drawer_header_title}>Inventaire</Text>
+              <Text style={styles.drawer_header_subtitle}>Rail Logistic</Text>
+            </View>
+          </View>
+
+          {/* Séparateur */}
+          <View style={styles.drawer_separator}>
+            <LinearGradient
+              colors={["transparent", COLORS.accent_primary, "transparent"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.drawer_separator_gradient}
             />
           </View>
-          <View style={styles.drawer_header_text}>
-            <Text style={styles.drawer_header_title}>Inventaire</Text>
-            <Text style={styles.drawer_header_subtitle}>Rail Logistic</Text>
+
+          {/* Liste des éléments du drawer */}
+          <DrawerContentScrollView
+            {...props}
+            contentContainerStyle={styles.drawer_scroll_content}
+          >
+            <DrawerItemList {...props} state={drawerState} />
+
+            {/* Séparateur avant déconnexion */}
+            <View style={styles.drawer_logout_separator} />
+
+            <DrawerItem
+              label="Déconnexion"
+              labelStyle={styles.drawer_logout_label}
+              onPress={handleLogout}
+              icon={() => (
+                <IconSymbol
+                  name="rectangle.portrait.and.arrow.right"
+                  size={20}
+                  color={COLORS.text_muted}
+                />
+              )}
+              style={styles.drawer_logout_item}
+            />
+          </DrawerContentScrollView>
+
+          {/* Footer du drawer */}
+          <View style={styles.drawer_footer}>
+            <Text style={styles.drawer_footer_text}>
+              © 2025 Rail Logistic SPA v1.0.5
+            </Text>
           </View>
         </View>
-
-        {/* Séparateur */}
-        <View style={styles.drawer_separator}>
-          <LinearGradient
-            colors={["transparent", COLORS.accent_primary, "transparent"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.drawer_separator_gradient}
-          />
-        </View>
-
-        {/* Liste des éléments du drawer */}
-        <DrawerContentScrollView
-          {...props}
-          contentContainerStyle={styles.drawer_scroll_content}
-        >
-          <DrawerItemList {...props} state={drawerState} />
-
-          {/* Séparateur avant déconnexion */}
-          <View style={styles.drawer_logout_separator} />
-
-          <DrawerItem
-            label="Déconnexion"
-            labelStyle={styles.drawer_logout_label}
-            onPress={handleLogout}
-            icon={() => (
-              <IconSymbol
-                name="rectangle.portrait.and.arrow.right"
-                size={20}
-                color={COLORS.text_muted}
-              />
-            )}
-            style={styles.drawer_logout_item}
-          />
-        </DrawerContentScrollView>
-
-        {/* Footer du drawer */}
-        <View style={styles.drawer_footer}>
-          <Text style={styles.drawer_footer_text}>
-            © 2025 Rail Logistic SPA
-          </Text>
-        </View>
-      </View>
-    );
+      );
     },
     [handleLogout]
   );
