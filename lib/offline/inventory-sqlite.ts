@@ -241,6 +241,7 @@ async function initializeInventoryDatabase(): Promise<void> {
         "status TEXT NOT NULL, " +
         "status_label TEXT NOT NULL, " +
         "is_synced INTEGER NOT NULL, " +
+        "synced_without_image INTEGER NOT NULL, " +
         "updated_at TEXT NOT NULL" +
         ")",
     },
@@ -393,6 +394,12 @@ async function migrateInventoryDatabase(): Promise<void> {
   if (!scanColumnNames.has("longitude")) {
     await runInventorySql(
       "ALTER TABLE inventory_scans ADD COLUMN longitude TEXT"
+    );
+  }
+
+  if (!scanColumnNames.has("synced_without_image")) {
+    await runInventorySql(
+      "ALTER TABLE inventory_scans ADD COLUMN synced_without_image INTEGER NOT NULL DEFAULT 0"
     );
   }
 }

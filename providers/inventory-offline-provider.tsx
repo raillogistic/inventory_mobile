@@ -16,11 +16,13 @@ import {
   GROUPE_COMPTAGE_LIST_QUERY,
   LOCATION_LIST_QUERY,
   OFFLINE_ARTICLE_PAGES_QUERY,
+  SYNC_INVENTORY_SCAN_IMAGES_MUTATION,
   SYNC_INVENTORY_SCANS_MUTATION,
   type CampagneInventaireListData,
   type CampagneInventaireListVariables,
   type GroupeComptageListData,
   type GroupeComptageListVariables,
+  type InventoryScanImageSyncInput,
   type InventoryScanSyncInput,
   type OfflineArticlePageData,
   type OfflineArticlePageVariables,
@@ -29,6 +31,8 @@ import {
   type OfflineArticleEntry,
   type OfflineArticleLocation,
   type OfflineArticleQueryItem,
+  type SyncInventoryScanImagesData,
+  type SyncInventoryScanImagesVariables,
   type SyncInventoryScansData,
   type SyncInventoryScansVariables,
 } from "@/lib/graphql/inventory-operations";
@@ -58,7 +62,7 @@ const OFFLINE_SYNC_LIMITS = {
 } as const;
 
 /** Max number of scan records to sync per request. */
-const SCAN_SYNC_BATCH_SIZE = 5;
+const SCAN_SYNC_BATCH_SIZE = 2;
 
 /** JPEG quality used for scan image compression (0..1). */
 const SCAN_IMAGE_COMPRESSION_QUALITY = 0.7;
@@ -267,6 +271,30 @@ async function buildScanSyncInput(
   };
 }
 
+/**
+ * Build the payload for syncing images to an existing scan.
+ * @param scan - Scan record with a remote identifier.
+ * @returns Image-only sync payload.
+ */
+async function buildScanImageSyncInput(
+  scan: InventoryScanRecord
+): Promise<InventoryScanImageSyncInput> {
+  if (!scan.remoteId) {
+    throw new Error("Identifiant distant manquant.");
+  }
+
+  const capturePayload = await buildScanCapturePayload(scan);
+  if (!capturePayload) {
+    throw new Error("Aucune image a synchroniser.");
+  }
+
+  return {
+    local_id: scan.id,
+    remote_id: scan.remoteId,
+    donnees_capture: capturePayload,
+  };
+}
+
 /** Context shape for offline inventory data. */
 export type InventoryOfflineContextValue = {
   /** Cached datasets for offline usage. */
@@ -292,6 +320,8 @@ export type InventoryOfflineContextValue = {
     scanId: string,
     options?: InventoryScanSyncOptions
   ) => Promise<InventoryScanSyncSummary>;
+  /** Upload images for a previously synced scan. */
+  syncScanImageById: (scanId: string) => Promise<InventoryScanSyncSummary>;
 };
 
 /** Props for the InventoryOfflineProvider component. */
@@ -535,8 +565,13 @@ export function InventoryOfflineProvider({
         const result = results.find((item) => item.local_id === scan.id);
 
         if (result?.ok && result.remote_id) {
+          const syncedWithoutImage = options?.includeImages === false;
           await markInventoryScansSynced([
-            { id: scan.id, remoteId: result.remote_id },
+            {
+              id: scan.id,
+              remoteId: result.remote_id,
+              syncedWithoutImage,
+            },
           ]);
           return { totalCount: 1, syncedCount: 1, failedCount: 0 };
         }
@@ -560,6 +595,111 @@ export function InventoryOfflineProvider({
             : error instanceof Error
             ? error.message
             : "La synchronisation du scan a echoue.";
+        setScanSyncError(message);
+        throw new Error(message);
+      } finally {
+        setIsScanSyncing(false);
+      }
+    },
+    [accessToken, client, isAuthenticated]
+  );
+
+  /** Upload images for a previously synced scan record. */
+  const syncScanImageById = useCallback(
+    async (scanId: string): Promise<InventoryScanSyncSummary> => {
+      if (!isAuthenticated || !accessToken) {
+        const message = "Connexion requise pour synchroniser.";
+        setScanSyncError(message);
+        throw new Error(message);
+      }
+
+      setIsScanSyncing(true);
+      setScanSyncError(null);
+
+      try {
+        const scan = await loadInventoryScanById(scanId);
+        if (!scan) {
+          const message = "Scan introuvable.";
+          setScanSyncError(message);
+          return {
+            totalCount: 0,
+            syncedCount: 0,
+            failedCount: 0,
+            errors: [message],
+          };
+        }
+
+        if (!scan.isSynced || !scan.syncedWithoutImage) {
+          const message = "Le scan est deja complet.";
+          setScanSyncError(message);
+          return {
+            totalCount: 1,
+            syncedCount: 0,
+            failedCount: 1,
+            errors: [message],
+          };
+        }
+
+        let payload: InventoryScanImageSyncInput;
+        try {
+          payload = await buildScanImageSyncInput(scan);
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Preparation image impossible.";
+          setScanSyncError(message);
+          return {
+            totalCount: 1,
+            syncedCount: 0,
+            failedCount: 1,
+            errors: [message],
+          };
+        }
+
+        const response = await client.mutate<
+          SyncInventoryScanImagesData,
+          SyncInventoryScanImagesVariables
+        >({
+          mutation: SYNC_INVENTORY_SCAN_IMAGES_MUTATION,
+          variables: { input: [payload] },
+          fetchPolicy: "no-cache",
+        });
+
+        const results =
+          response.data?.sync_inventory_scan_images?.results ?? [];
+        const result = results.find((item) => item.local_id === scan.id);
+
+        if (result?.ok && result.remote_id) {
+          await markInventoryScansSynced([
+            {
+              id: scan.id,
+              remoteId: scan.remoteId,
+              syncedWithoutImage: false,
+            },
+          ]);
+          return { totalCount: 1, syncedCount: 1, failedCount: 0 };
+        }
+
+        const reason =
+          result?.errors && result.errors.length > 0
+            ? result.errors.join(", ")
+            : "Reponse manquante.";
+        const errorMessage = `${scan.codeArticle}: ${reason}`;
+        setScanSyncError(errorMessage);
+        return {
+          totalCount: 1,
+          syncedCount: 0,
+          failedCount: 1,
+          errors: [errorMessage],
+        };
+      } catch (error) {
+        const message =
+          error instanceof ApolloError
+            ? getApolloErrorMessage(error)
+            : error instanceof Error
+            ? error.message
+            : "La synchronisation de l'image a echoue.";
         setScanSyncError(message);
         throw new Error(message);
       } finally {
@@ -630,7 +770,11 @@ export function InventoryOfflineProvider({
         for (const scan of syncBatchScans) {
           const result = resultMap.get(scan.id);
           if (result?.ok && result.remote_id) {
-            syncUpdates.push({ id: scan.id, remoteId: result.remote_id });
+            syncUpdates.push({
+              id: scan.id,
+              remoteId: result.remote_id,
+              syncedWithoutImage: false,
+            });
           } else {
             failedCount += 1;
             const reason =
@@ -686,6 +830,7 @@ export function InventoryOfflineProvider({
       syncError,
       scanSyncError,
       syncAll,
+      syncScanImageById,
       syncScanById,
       syncScans,
     }),
@@ -698,6 +843,7 @@ export function InventoryOfflineProvider({
       scanSyncError,
       syncAll,
       syncError,
+      syncScanImageById,
       syncScanById,
       syncScans,
     ]

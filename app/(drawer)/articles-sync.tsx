@@ -104,8 +104,13 @@ function getStatusColor(status: string | undefined): string {
  * Écran de synchronisation des articles avec design premium.
  */
 export default function ArticlesSyncScreen() {
-  const { isScanSyncing, scanSyncError, syncScanById, syncScans } =
-    useInventoryOffline();
+  const {
+    isScanSyncing,
+    scanSyncError,
+    syncScanById,
+    syncScanImageById,
+    syncScans,
+  } = useInventoryOffline();
   const [activeTab, setActiveTab] = useState<SyncTabId>("pending");
   const [pendingScans, setPendingScans] = useState<InventoryScanRecord[]>([]);
   const [syncedScans, setSyncedScans] = useState<InventoryScanRecord[]>([]);
@@ -122,7 +127,13 @@ export default function ArticlesSyncScreen() {
     }
 
     Alert.alert("Synchronisation", message);
-  }, [handleSyncItem, handleSyncItemNoImage, isScanSyncing, syncingScanId]);
+  }, [
+    handleSyncItem,
+    handleSyncItemImageOnly,
+    handleSyncItemNoImage,
+    isScanSyncing,
+    syncingScanId,
+  ]);
 
   /** Charge les scans groupés par état de sync. */
   const loadScans = useCallback(async () => {
@@ -285,6 +296,52 @@ export default function ArticlesSyncScreen() {
     [isScanSyncing, loadScans, showSyncMessage, syncScanById]
   );
 
+  /**
+   * Sync only the image for a previously synced scan.
+   * @param scanId - Scan identifier.
+   */
+  const handleSyncItemImageOnly = useCallback(
+    async (scanId: string) => {
+      if (isScanSyncing) {
+        return;
+      }
+
+      setSyncingScanId(scanId);
+
+      try {
+        const summary = await syncScanImageById(scanId);
+        await loadScans();
+
+        if (summary.totalCount === 0) {
+          showSyncMessage("Aucun article a synchroniser.");
+          return;
+        }
+
+        if (summary.failedCount === 0) {
+          showSyncMessage("Image synchronisee.");
+          return;
+        }
+
+        const errorSummary =
+          summary.errors && summary.errors.length > 0
+            ? ` (${summary.errors.slice(0, 1).join(" | ")})`
+            : "";
+        showSyncMessage(
+          `${summary.syncedCount}/${summary.totalCount} image synchronisee.${errorSummary}`
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "La synchronisation a echoue.";
+        showSyncMessage(message);
+      } finally {
+        setSyncingScanId(null);
+      }
+    },
+    [isScanSyncing, loadScans, showSyncMessage, syncScanImageById]
+  );
+
   const activeScans = activeTab === "pending" ? pendingScans : syncedScans;
 
   /** Rend une ligne de scan. */
@@ -415,6 +472,33 @@ export default function ArticlesSyncScreen() {
                   <Text style={styles.item_sync_button_secondary_text}>
                     Sans image
                   </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {item.isSynced && item.syncedWithoutImage && (
+              <View style={styles.item_sync_actions}>
+                <TouchableOpacity
+                  style={[
+                    styles.item_sync_button,
+                    isItemSyncing && styles.item_sync_button_disabled,
+                  ]}
+                  onPress={() => handleSyncItemImageOnly(item.id)}
+                  disabled={isScanSyncing}
+                  activeOpacity={0.7}
+                >
+                  {isItemSyncing ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={PREMIUM_COLORS.accent_primary}
+                    />
+                  ) : (
+                    <IconSymbol
+                      name="photo"
+                      size={14}
+                      color={PREMIUM_COLORS.accent_primary}
+                    />
+                  )}
+                  <Text style={styles.item_sync_button_text}>Sync image</Text>
                 </TouchableOpacity>
               </View>
             )}

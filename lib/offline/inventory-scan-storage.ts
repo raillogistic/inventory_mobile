@@ -58,6 +58,8 @@ export type InventoryScanRecord = {
   statusLabel: string;
   /** Whether the record has been synced to the backend. */
   isSynced: boolean;
+  /** Whether the record was synced without images. */
+  syncedWithoutImage: boolean;
   /** Last update timestamp for the record. */
   updatedAt: string;
 };
@@ -140,6 +142,8 @@ export type InventoryScanSyncUpdateInput = {
   id: string;
   /** Remote identifier returned by the backend. */
   remoteId: string | null;
+  /** Whether the scan was synced without images. */
+  syncedWithoutImage?: boolean;
 };
 
 /** SQLite row representation for scan records. */
@@ -192,6 +196,8 @@ type InventoryScanRow = {
   status_label: string;
   /** Sync flag stored as integer. */
   is_synced: number;
+  /** Flag indicating sync without image. */
+  synced_without_image: number;
   /** Updated timestamp. */
   updated_at: string;
 };
@@ -233,6 +239,7 @@ function mapInventoryScanRow(row: InventoryScanRow): InventoryScanRecord {
     status: row.status,
     statusLabel: row.status_label,
     isSynced: row.is_synced === 1,
+    syncedWithoutImage: row.synced_without_image === 1,
     updatedAt: row.updated_at,
   };
 }
@@ -283,7 +290,7 @@ export async function loadInventoryScans(
   const sql =
     "SELECT id, remote_id, campagne_id, groupe_id, lieu_id, lieu_name, latitude, longitude, code_article, " +
     "article_id, article_desc, observation, commentaire, custom_desc, serial_number, etat, capture_le, source_scan, " +
-    "image_uri, image_uri2, image_uri3, status, status_label, is_synced, updated_at " +
+    "image_uri, image_uri2, image_uri3, status, status_label, is_synced, synced_without_image, updated_at " +
     `FROM inventory_scans ${whereClause} ` +
     "ORDER BY capture_le DESC " +
     `${limitClause}`;
@@ -306,7 +313,7 @@ export async function loadInventoryScanById(
   const sql =
     "SELECT id, remote_id, campagne_id, groupe_id, lieu_id, lieu_name, latitude, longitude, code_article, " +
     "article_id, article_desc, observation, commentaire, custom_desc, serial_number, etat, capture_le, source_scan, " +
-    "image_uri, image_uri2, image_uri3, status, status_label, is_synced, updated_at " +
+    "image_uri, image_uri2, image_uri3, status, status_label, is_synced, synced_without_image, updated_at " +
     "FROM inventory_scans WHERE id = ? LIMIT 1";
 
   const result = await runInventorySql<InventoryScanRow>(sql, [id]);
@@ -347,14 +354,15 @@ export async function createInventoryScan(
     status: input.status,
     statusLabel: input.statusLabel,
     isSynced: false,
+    syncedWithoutImage: false,
     updatedAt: now,
   };
 
   await runInventorySql(
     "INSERT INTO inventory_scans " +
       "(id, remote_id, code_article, article_id, article_desc, campagne_id, groupe_id, lieu_id, lieu_name, latitude, longitude, " +
-      "commentaire, custom_desc, observation, serial_number, etat, capture_le, source_scan, image_uri, image_uri2, image_uri3, status, status_label, is_synced, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "commentaire, custom_desc, observation, serial_number, etat, capture_le, source_scan, image_uri, image_uri2, image_uri3, status, status_label, is_synced, synced_without_image, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       record.id,
       record.remoteId,
@@ -380,6 +388,7 @@ export async function createInventoryScan(
       record.status,
       record.statusLabel,
       record.isSynced ? 1 : 0,
+      record.syncedWithoutImage ? 1 : 0,
       record.updatedAt,
     ]
   );
@@ -397,7 +406,7 @@ export async function updateInventoryScanDetails(
   const now = new Date().toISOString();
 
   await runInventorySql(
-    "UPDATE inventory_scans SET etat = ?, observation = ?, commentaire = ?, custom_desc = ?, serial_number = ?, is_synced = 0, updated_at = ? WHERE id = ?",
+    "UPDATE inventory_scans SET etat = ?, observation = ?, commentaire = ?, custom_desc = ?, serial_number = ?, is_synced = 0, synced_without_image = 0, updated_at = ? WHERE id = ?",
     [
       input.etat ?? null,
       input.observation ?? null,
@@ -426,8 +435,17 @@ export async function markInventoryScansSynced(
   await runInventorySqlBatch(
     updates.map((update) => ({
       sql:
-        "UPDATE inventory_scans SET remote_id = ?, is_synced = 1, updated_at = ? WHERE id = ?",
-      params: [update.remoteId, now, update.id],
+        "UPDATE inventory_scans SET remote_id = ?, is_synced = 1, synced_without_image = COALESCE(?, synced_without_image), updated_at = ? WHERE id = ?",
+      params: [
+        update.remoteId,
+        typeof update.syncedWithoutImage === "boolean"
+          ? update.syncedWithoutImage
+            ? 1
+            : 0
+          : null,
+        now,
+        update.id,
+      ],
     }))
   );
 }

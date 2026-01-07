@@ -821,3 +821,60 @@ export const SYNC_INVENTORY_SCANS_MUTATION = gql`
     }
   }
 `;
+
+/** Input payload for syncing images to an existing scan. */
+export type InventoryScanImageSyncInput = {
+  /** Local scan identifier used to map results. */
+  local_id: string;
+  /** Remote scan identifier returned by the backend. */
+  remote_id: string;
+  /** Capture payload containing base64 image data. */
+  donnees_capture: string;
+};
+
+/** Result entry returned for a synced scan image. */
+export type InventoryScanImageSyncResult = {
+  /** Local scan identifier from the device. */
+  local_id: string;
+  /** Remote scan identifier returned by the backend. */
+  remote_id: string | null;
+  /** Whether the image sync was successful. */
+  ok: boolean | null;
+  /** Error messages for a failed image sync. */
+  errors: string[] | null;
+};
+
+/** Variables for the sync_inventory_scan_images mutation. */
+export type SyncInventoryScanImagesVariables = {
+  /** Mutation payload of scan images to sync. */
+  input: InventoryScanImageSyncInput[];
+};
+
+/** Response payload for sync_inventory_scan_images. */
+export type SyncInventoryScanImagesData = {
+  /** Sync mutation response wrapper. */
+  sync_inventory_scan_images: {
+    /** Success flag returned by the API. */
+    ok: boolean | null;
+    /** Message returned by the API. */
+    message: string | null;
+    /** Per-scan image sync results. */
+    results: InventoryScanImageSyncResult[] | null;
+  } | null;
+};
+
+/** GraphQL mutation for syncing scan images only. */
+export const SYNC_INVENTORY_SCAN_IMAGES_MUTATION = gql`
+  mutation SyncInventoryScanImages($input: [InventoryScanImageSyncInput!]!) {
+    sync_inventory_scan_images(input: $input) {
+      ok
+      message
+      results {
+        local_id
+        remote_id
+        ok
+        errors
+      }
+    }
+  }
+`;
