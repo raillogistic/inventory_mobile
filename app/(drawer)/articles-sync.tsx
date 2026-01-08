@@ -9,6 +9,7 @@ import {
   Alert,
   FlatList,
   Platform,
+  Share,
   StyleSheet,
   Text,
   ToastAndroid,
@@ -19,8 +20,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
-import * as FileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import {
@@ -379,30 +378,10 @@ export default function ArticlesSyncScreen() {
       const csvContent = rows.join("\n");
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const filename = `inventory-scans-${timestamp}.csv`;
-      const baseDirectory =
-        FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
 
-      if (!baseDirectory) {
-        showSyncMessage("Stockage indisponible.");
-        return;
-      }
-
-      const fileUri = `${baseDirectory}${filename}`;
-
-      await FileSystem.writeAsStringAsync(fileUri, csvContent, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
-
-      const canShare = await Sharing.isAvailableAsync();
-      if (!canShare) {
-        showSyncMessage("Partage indisponible.");
-        return;
-      }
-
-      await Sharing.shareAsync(fileUri, {
-        mimeType: "text/csv",
-        dialogTitle: filename,
-        UTI: "public.comma-separated-values-text",
+      await Share.share({
+        title: filename,
+        message: csvContent,
       });
 
       showSyncMessage(`${scans.length} scan(s) exportes.`);
@@ -921,7 +900,7 @@ export default function ArticlesSyncScreen() {
                       />
                     )}
                     <Text style={styles.sync_button_secondary_text}>
-                      {isExportingExcel ? "Partage..." : "Partager Excel"}
+                      {isExportingExcel ? "Partage..." : "Partager"}
                     </Text>
                   </View>
                 </TouchableOpacity>
