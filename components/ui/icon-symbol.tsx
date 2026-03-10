@@ -21,6 +21,17 @@ const MAPPING = {
   'gearshape.fill': 'settings',
   'arrow.clockwise': 'sync',
   'eye': 'visibility',
+  'folder.fill': 'folder',
+  'rectangle.stack.fill': 'view-agenda',
+  'mappin.and.ellipse': 'place',
+  'barcode.viewfinder': 'qr-code-scanner',
+  'arrow.triangle.2.circlepath': 'loop',
+  'list.bullet.rectangle.fill': 'list-alt',
+  'chart.bar.fill': 'bar-chart',
+  'minus.circle.fill': 'remove-circle',
+  'plus.circle.fill': 'add-circle',
+  'clock.arrow.circlepath': 'history',
+  'checkmark.seal.fill': 'verified',
 } as IconMapping;
 
 /**

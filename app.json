@@ -18,6 +18,7 @@
         }
       }
     },
+
     "android": {
       "versionCode": 2,
       "icon": "./assets/images/app-logo.png",

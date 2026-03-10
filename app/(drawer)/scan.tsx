@@ -7,32 +7,25 @@ import React, {
 } from "react";
 import {
   ActivityIndicator,
-  Animated,
   BackHandler,
   FlatList,
-  Image,
-  ScrollView,
-  Modal,
-  Pressable,
   StyleSheet,
   TextInput,
   TouchableOpacity,
   View,
+  type LayoutChangeEvent,
 } from "react-native";
 import {
-  CameraView,
-  type BarcodeScanningResult,
-  type BarcodeType,
   useCameraPermissions,
+  type BarcodeScanningResult,
+  type CameraView,
 } from "expo-camera";
-import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 import * as FileSystem from "expo-file-system/legacy";
 
 import { ThemedText } from "@/components/themed-text";
-import { IconSymbol } from "@/components/ui/icon-symbol";
 import {
   PremiumScreenWrapper,
   PREMIUM_COLORS,
@@ -42,7 +35,6 @@ import { useInventoryOffline } from "@/hooks/use-inventory-offline";
 
 import {
   type EnregistrementInventaireEtat,
-  type OfflineArticleEntry,
 } from "@/lib/graphql/inventory-operations";
 import { loadInventoryArticleByCode } from "@/lib/offline/inventory-offline-storage";
 import {
@@ -57,298 +49,39 @@ import {
   type ScanHistoryItem,
 } from "@/lib/storage/scan-history";
 
-/** Payload used to render recent scan entries. */
-type RecentScan = {
-  /** Unique identifier for the scan, if available. */
-  id: string;
-  /** Scanned article code. */
-  code: string;
-  /** Optional article description returned by the API. */
-  description: string | null;
-  /** Whether the scanned code matches a known article. */
-  hasArticle: boolean;
-  /** Optional current location name of the article at load time. */
-  previousLocationName: string | null;
-  /** Capture timestamp as an ISO string. */
-  capturedAt: string;
-};
+import {
+  SCAN_STATUS_LIMIT,
+} from "./scan-screen/constants";
+import {
+  type RecentScan,
+  type ScanSource,
+  type ScanCoordinates,
+  type LocationArticleStatus,
+  type LocationArticleItem,
+  type ScanListTab,
+  type ScanDetail,
+  type ScanButtonLayout,
+  type ScanFrameLayout,
+  type CameraViewHandle,
+} from "./scan-screen/types";
+import {
+  formatTimestamp,
+  buildManualCode,
+  buildOfflineArticleLookup,
+  normalizeScanCode,
+  getSilentScanCoordinates,
+  getStatusLabel,
+  isBarcodeInsideFrame,
+} from "./scan-screen/utils";
 
-/** Origin source of the scan capture. */
-type ScanSource = "manual" | "camera";
-
-/** GPS coordinates captured for a scan. */
-type ScanCoordinates = {
-  /** Latitude value captured from the device. */
-  latitude: string | null;
-  /** Longitude value captured from the device. */
-  longitude: string | null;
-};
-
-/** Visual status applied to location article rows. */
-type LocationArticleStatus = "pending" | "scanned" | "missing" | "other";
-
-/** Payload used to render location article rows. */
-type LocationArticleItem = {
-  /** Unique identifier for the row, when available. */
-  id: string | null;
-  /** Article code displayed in the list. */
-  code: string;
-  /** Optional article description. */
-  description: string | null;
-  /** Previous location name captured from the offline cache. */
-  previousLocationName: string | null;
-  /** New location name based on the current selection. */
-  nextLocationName: string | null;
-  /** Status used to drive list coloring. */
-  status: LocationArticleStatus;
-  /** Source list for the row. */
-  source: "location" | "extra";
-};
-
-/** Tab keys for the scan list. */
-type ScanListTab = "scanned" | "location";
-
-/** Tab metadata for the scan list UI. */
-type ScanListTabConfig = {
-  /** Unique tab identifier. */
-  id: ScanListTab;
-  /** Label displayed for the tab. */
-  label: string;
-};
-
-/** Payload used to render the scan detail modal. */
-type ScanDetail = {
-  /** Unique identifier for the scan record. */
-  id: string | null;
-  /** Scanned article code displayed in the modal. */
-  code: string;
-  /** Optional article identifier resolved from the cache. */
-  articleId: string | null;
-  /** Optional description for the scanned article. */
-  description: string | null;
-  /** Optional captured image URI. */
-  imageUri: string | null;
-  /** Optional short description for temporary articles. */
-  customDesc: string | null;
-  /** Source of the scan capture. */
-  source: ScanSource | null;
-  /** Status used to highlight the scanned article. */
-  status: LocationArticleStatus;
-  /** Short label for the scan status. */
-  statusLabel: string;
-  /** Scan timestamp used for the modal subtitle. */
-  capturedAt: string;
-  /** Whether this scan was already recorded for the location. */
-  alreadyScanned: boolean;
-  /** Optional observation captured for the scan. */
-  observation: string | null;
-  /** Optional serial number captured for the scan. */
-  serialNumber: string | null;
-};
-
-/** Etat option displayed in the scan modal. */
-type EtatOption = {
-  /** Etat value persisted in the backend. */
-  value: EnregistrementInventaireEtat;
-  /** Human-readable label shown in the UI. */
-  label: string;
-};
-
-/** Camera view handle used for capturing scan images. */
-type CameraViewHandle = React.ElementRef<typeof CameraView>;
-
-/** Layout info for positioning the scan button border runner. */
-type ScanButtonLayout = {
-  /** Width of the scan button wrapper. */
-  width: number;
-  /** Height of the scan button wrapper. */
-  height: number;
-};
-
-/** Layout rectangle used to validate barcode positions. */
-type ScanFrameLayout = {
-  /** Left position relative to the camera preview. */
-  x: number;
-  /** Top position relative to the camera preview. */
-  y: number;
-  /** Width of the scan frame. */
-  width: number;
-  /** Height of the scan frame. */
-  height: number;
-};
-
-/** Limits the number of scans fetched to drive status updates. */
-const SCAN_STATUS_LIMIT = 2000;
-/** Supported 1D barcode formats for the camera scanner. */
-const BARCODE_TYPES: BarcodeType[] = [
-  "code128",
-  "code39",
-  "code93",
-  "ean13",
-  "ean8",
-  "itf14",
-  "upc_a",
-  "upc_e",
-  "codabar",
-];
-/** Etat options available when validating a scan. */
-const ETAT_OPTIONS: EtatOption[] = [
-  { value: "BIEN", label: "Bien" },
-  { value: "MOYENNE", label: "Moyenne" },
-  { value: "HORS_SERVICE", label: "Hors service" },
-];
-/** Tabs available for the scan list view. */
-const SCAN_LIST_TABS: ScanListTabConfig[] = [
-  { id: "scanned", label: "Articles déja scannés" },
-  { id: "location", label: "Articles dans la localisation" },
-];
-
-/**
- * Format a timestamp for display in French locale.
- */
-function formatTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(date);
-}
-
-/**
- * Build a unique code for manual entries without barcodes.
- */
-function buildManualCode(): string {
-  const timePart = Date.now().toString(36).toUpperCase();
-  const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
-  return `MANUEL-${timePart}-${randomPart}`;
-}
-
-/**
- * Build a lookup table for offline articles keyed by normalized code.
- */
-function buildOfflineArticleLookup(
-  articles: OfflineArticleEntry[]
-): Map<string, OfflineArticleEntry> {
-  const map = new Map<string, OfflineArticleEntry>();
-
-  for (const article of articles) {
-    const normalized = normalizeScanCode(article.code);
-    if (!normalized) {
-      continue;
-    }
-    map.set(normalized, article);
-  }
-
-  return map;
-}
-
-/**
- * Normalize scan codes for comparison.
- */
-function normalizeScanCode(value: string): string {
-  return value.trim().toUpperCase();
-}
-
-/**
- * Format device coordinates into a scan-friendly payload.
- */
-function formatScanCoordinates(
-  coords: Location.LocationObjectCoords
-): ScanCoordinates {
-  return {
-    latitude: Number.isFinite(coords.latitude)
-      ? coords.latitude.toString()
-      : null,
-    longitude: Number.isFinite(coords.longitude)
-      ? coords.longitude.toString()
-      : null,
-  };
-}
-
-/**
- * Resolve GPS coordinates without prompting the user.
- */
-async function getSilentScanCoordinates(): Promise<ScanCoordinates | null> {
-  try {
-    const permission = await Location.getForegroundPermissionsAsync();
-    if (!permission.granted) {
-      return null;
-    }
-
-    const lastKnown = await Location.getLastKnownPositionAsync();
-    if (lastKnown?.coords) {
-      return formatScanCoordinates(lastKnown.coords);
-    }
-
-    const currentPositionPromise = Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-      mayShowUserSettingsDialog: false,
-    }).catch(() => null);
-    const timeoutPromise = new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), 1500);
-    });
-    const currentPosition = await Promise.race([
-      currentPositionPromise,
-      timeoutPromise,
-    ]);
-
-    if (!currentPosition?.coords) {
-      return null;
-    }
-
-    return formatScanCoordinates(currentPosition.coords);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Convert a scan status to a short, human-readable label.
- */
-function getStatusLabel(status: LocationArticleStatus): string {
-  switch (status) {
-    case "scanned":
-      return "Article du lieu";
-    case "other":
-      return "Article hors lieu";
-    case "missing":
-      return "Article inconnu";
-    default:
-      return "Article en attente";
-  }
-}
-
-/**
- * Validate that a scanned barcode sits inside the scan frame.
- */
-function isBarcodeInsideFrame(
-  bounds: BarcodeScanningResult["bounds"] | undefined,
-  frame: ScanFrameLayout | null
-): boolean {
-  if (!bounds || !frame) {
-    return false;
-  }
-
-  const hasOrigin = "origin" in bounds && Boolean(bounds.origin);
-  const hasSize = "size" in bounds && Boolean(bounds.size);
-  if (!hasOrigin || !hasSize) {
-    return false;
-  }
-
-  const centerX = bounds.origin.x + bounds.size.width / 2;
-  const centerY = bounds.origin.y + bounds.size.height / 2;
-  return (
-    centerX >= frame.x &&
-    centerX <= frame.x + frame.width &&
-    centerY >= frame.y &&
-    centerY <= frame.y + frame.height
-  );
-}
+import { ScanListItem } from "./scan-screen/components/scan-list-item";
+import { ScanHeader } from "./scan-screen/components/scan-header";
+import { CameraModal } from "./scan-screen/components/camera-modal";
+import { ManualModal } from "./scan-screen/components/manual-modal";
+import { ScanDetailModal } from "./scan-screen/components/scan-detail-modal";
+import { ContextCard } from "./scan-screen/components/context-card";
+import { RecapCard } from "./scan-screen/components/recap-card";
+import { ScanTabs } from "./scan-screen/components/scan-tabs";
 
 /**
  * Scan capture screen for the comptage flow.
@@ -396,12 +129,10 @@ export default function ScanScreen() {
   const [customDescriptionValue, setCustomDescriptionValue] =
     useState<string>("");
   const [activeTab, setActiveTab] = useState<ScanListTab>("scanned");
-  const [scanButtonLayout, setScanButtonLayout] =
-    useState<ScanButtonLayout | null>(null);
+  
   const codeInputRef = useRef<TextInput>(null);
   const cameraRef = useRef<CameraViewHandle | null>(null);
   const manualCameraRef = useRef<CameraViewHandle | null>(null);
-  const scanBorderAnim = useRef(new Animated.Value(0)).current;
   const scanLockRef = useRef(false);
 
   const campaignId = session.campaign?.id ?? null;
@@ -469,7 +200,7 @@ export default function ScanScreen() {
   const isCameraButtonDisabled =
     !hasCameraPermission && !canAskCameraPermission;
   const manualStatusMessage = "Ajoutez un article manuellement.";
-  const manualGlowColor = "rgba(249,115,22,0.45)";
+  
   const manualImageUris = useMemo(
     () =>
       [manualImageUri, manualImageUri2, manualImageUri3].filter(
@@ -477,7 +208,7 @@ export default function ScanScreen() {
       ),
     [manualImageUri, manualImageUri2, manualImageUri3]
   );
-  const manualImageCount = manualImageUris.length;
+  
   const locationArticlesLoading =
     !isHydrated || (isSyncing && cache.articles.length === 0);
   const locationArticlesErrorMessage = syncError;
@@ -653,94 +384,7 @@ export default function ScanScreen() {
     activeListItems.length === 0 &&
     !isRefreshing;
   const cameraOverlayLabel = isSubmittingScan ? "Scan en cours..." : null;
-  const isMissingDraft = Boolean(
-    scanDetail && scanDetail.status === "missing" && !scanDetail.id
-  );
-  const canSubmitScanDetail = useMemo(() => {
-    if (!scanDetail) {
-      return false;
-    }
-
-    const trimmedObservation = observationValue.trim();
-    const trimmedSerialNumber = serialNumberValue.trim();
-    const trimmedCustomDescription = customDescriptionValue.trim();
-    const hasUpdate =
-      Boolean(selectedEtat) ||
-      trimmedObservation.length > 0 ||
-      trimmedSerialNumber.length > 0 ||
-      trimmedCustomDescription.length > 0;
-
-    if (scanDetail.status === "missing" && !scanDetail.id) {
-      return (
-        Boolean(selectedEtat) &&
-        trimmedCustomDescription.length > 0 &&
-        Boolean(scanDetail.imageUri) &&
-        !etatLoading
-      );
-    }
-
-    if (!scanDetail.id) {
-      return Boolean(selectedEtat) && !etatLoading;
-    }
-
-    return hasUpdate && !etatLoading;
-  }, [
-    customDescriptionValue,
-    etatLoading,
-    observationValue,
-    scanDetail,
-    selectedEtat,
-    serialNumberValue,
-  ]);
-  const scanBorderColor = useMemo(
-    () =>
-      scanBorderAnim.interpolate({
-        inputRange: [0, 0.2, 0.4, 0.6, 0.8, 1],
-        outputRange: [
-          "#EF4444",
-          "#F59E0B",
-          "#EAB308",
-          "#22C55E",
-          "#38BDF8",
-          "#A855F7",
-        ],
-      }),
-    [scanBorderAnim]
-  );
-  const scanGlowColor = useMemo(
-    () =>
-      scanBorderAnim.interpolate({
-        inputRange: [0, 0.5, 1],
-        outputRange: [
-          "rgba(239,68,68,0.4)",
-          "rgba(34,197,94,0.45)",
-          "rgba(168,85,247,0.5)",
-        ],
-      }),
-    [scanBorderAnim]
-  );
-  const scanBackgroundPulse = useMemo(
-    () =>
-      scanBorderAnim.interpolate({
-        inputRange: [0, 0.5, 1],
-        outputRange: [
-          "rgba(15,23,42,0.85)",
-          "rgba(30,41,59,0.7)",
-          "rgba(15,23,42,0.85)",
-        ],
-      }),
-    [scanBorderAnim]
-  );
-  const scanBackgroundScale = useMemo(
-    () =>
-      scanBorderAnim.interpolate({
-        inputRange: [0, 0.5, 1],
-        outputRange: [1, 1.05, 1],
-      }),
-    [scanBorderAnim]
-  );
-  const scanLineHeight = 6;
-
+  
   /** Find the latest scan detail for a code already scanned. */
   const findExistingScan = useCallback(
     (normalizedCode: string) => {
@@ -769,14 +413,6 @@ export default function ScanScreen() {
     },
     [articleLookup, scanRecords]
   );
-  const scanLineTranslateY = useMemo(() => {
-    const height = scanButtonLayout?.height ?? 0;
-    const maxY = Math.max(0, height - scanLineHeight);
-    return scanBorderAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0, maxY],
-    });
-  }, [scanBorderAnim, scanButtonLayout?.height]);
 
   useEffect(() => {
     if (!hasCameraPermission) {
@@ -784,25 +420,6 @@ export default function ScanScreen() {
       setIsManualCaptureActive(false);
     }
   }, [hasCameraPermission]);
-
-  useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(scanBorderAnim, {
-          toValue: 1,
-          duration: 4000,
-          useNativeDriver: false,
-        }),
-        Animated.timing(scanBorderAnim, {
-          toValue: 0,
-          duration: 4000,
-          useNativeDriver: false,
-        }),
-      ])
-    );
-    animation.start();
-    return () => animation.stop();
-  }, [scanBorderAnim]);
 
   useEffect(() => {
     if (!hasCameraPermission || !isCameraActive) {
@@ -1453,79 +1070,7 @@ export default function ScanScreen() {
   /** Render the location article list items. */
   const renderItem = useCallback(
     ({ item }: { item: LocationArticleItem }) => {
-      const isMissing = item.status === "missing";
-      const isOtherLocation = item.status === "other";
-      const isScanned = item.status === "scanned";
-
-      // Premium status-based colors
-      const cardBorderColor = isMissing
-        ? PREMIUM_COLORS.error
-        : isOtherLocation
-        ? PREMIUM_COLORS.warning
-        : isScanned
-        ? PREMIUM_COLORS.success
-        : PREMIUM_COLORS.glass_border;
-      const cardBackgroundColor = isMissing
-        ? "rgba(239, 68, 68, 0.15)"
-        : isOtherLocation
-        ? "rgba(245, 158, 11, 0.15)"
-        : isScanned
-        ? "rgba(16, 185, 129, 0.15)"
-        : PREMIUM_COLORS.glass_bg;
-      const primaryTextColor = isMissing
-        ? "#FCA5A5"
-        : isOtherLocation
-        ? "#FCD34D"
-        : isScanned
-        ? "#6EE7B7"
-        : PREMIUM_COLORS.text_primary;
-      const secondaryTextColor = isMissing
-        ? "#FCA5A5"
-        : isOtherLocation
-        ? "#FCD34D"
-        : isScanned
-        ? "#6EE7B7"
-        : PREMIUM_COLORS.text_muted;
-
-      return (
-        <View
-          style={[
-            styles.recentCard,
-            {
-              borderColor: cardBorderColor,
-              backgroundColor: cardBackgroundColor,
-            },
-          ]}
-        >
-          <ThemedText
-            type="defaultSemiBold"
-            style={{ color: primaryTextColor }}
-          >
-            {item.code}
-          </ThemedText>
-          {item.description ? (
-            <ThemedText
-              style={[styles.recentDescription, { color: secondaryTextColor }]}
-            >
-              {item.description}
-            </ThemedText>
-          ) : null}
-          {activeTab === "scanned" ? (
-            <>
-              <ThemedText
-                style={[styles.recentMeta, { color: secondaryTextColor }]}
-              >
-                Ancien lieu: {item.previousLocationName ?? "Inconnu"}
-              </ThemedText>
-              <ThemedText
-                style={[styles.recentMeta, { color: secondaryTextColor }]}
-              >
-                Nouveau lieu: {item.nextLocationName ?? "Lieu inconnu"}
-              </ThemedText>
-            </>
-          ) : null}
-        </View>
-      );
+      return <ScanListItem item={item} activeTab={activeTab} />;
     },
     [activeTab]
   );
@@ -1613,14 +1158,16 @@ export default function ScanScreen() {
           capturedAt: scanDetail.capturedAt,
           sourceScan: scanDetail.source ?? "manual",
           imageUri: scanDetail.imageUri,
-          status: scanDetail.status,
+          status: scanDetail.status as InventoryScanStatus,
           statusLabel: scanDetail.statusLabel,
         });
 
-        setScanRecords((current) => {
-          const next = [savedRecord, ...current];
-          return next.slice(0, SCAN_STATUS_LIMIT);
-        });
+        if (savedRecord) {
+            setScanRecords((current) => {
+                const next = [savedRecord!, ...current];
+                return next.slice(0, SCAN_STATUS_LIMIT);
+            });
+        }
       } catch (error) {
         const message =
           error instanceof Error
@@ -1712,6 +1259,7 @@ export default function ScanScreen() {
     session.location?.locationname,
     articleLookup,
   ]);
+  
   if (!campaignId || !groupId || !locationId) {
     return (
       <PremiumScreenWrapper>
@@ -1746,347 +1294,24 @@ export default function ScanScreen() {
         renderItem={renderItem}
         ListHeaderComponent={
           <View style={styles.headerContainer}>
-            <View>
-              <Animated.View
-                style={[
-                  styles.scanModeButton,
-                  {
-                    borderColor: scanBorderColor,
-                    shadowColor: scanGlowColor,
-                  },
-                ]}
-              >
-                <Animated.View
-                  pointerEvents="none"
-                  style={[
-                    styles.scanModeGlow,
-                    { backgroundColor: scanGlowColor },
-                  ]}
-                />
-                <Animated.View
-                  pointerEvents="none"
-                  style={[
-                    styles.scanModeRadial,
-                    { backgroundColor: scanGlowColor },
-                  ]}
-                />
-                <TouchableOpacity
-                  style={[
-                    styles.scanModeButtonInner,
-                    { backgroundColor: PREMIUM_COLORS.gradient_start },
-                  ]}
-                  onLayout={({ nativeEvent }) =>
-                    setScanButtonLayout({
-                      width: nativeEvent.layout.width,
-                      height: nativeEvent.layout.height,
-                    })
-                  }
-                  onPress={
-                    hasCameraPermission
-                      ? handleToggleCamera
-                      : handleRequestCamera
-                  }
-                  disabled={isCameraButtonDisabled}
-                >
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[
-                      styles.scanModeBackground,
-                      {
-                        backgroundColor: scanBackgroundPulse,
-                        transform: [{ scale: scanBackgroundScale }],
-                      },
-                    ]}
-                  />
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[
-                      styles.scanModeScanLine,
-                      {
-                        backgroundColor: scanBorderColor,
-                        transform: [{ translateY: scanLineTranslateY }],
-                      },
-                    ]}
-                  />
-                  <View style={styles.scanModeButtonContent}>
-                    <ThemedText style={styles.scanModeButtonTitle}>
-                      Scan mode
-                    </ThemedText>
-                    <ThemedText style={styles.scanModeButtonSubtitle}>
-                      Lancer la camera
-                    </ThemedText>
-                  </View>
-                </TouchableOpacity>
-              </Animated.View>
+            <ScanHeader
+              hasCameraPermission={hasCameraPermission}
+              isCameraButtonDisabled={isCameraButtonDisabled}
+              isSubmittingScan={isSubmittingScan}
+              isScanModalVisible={isScanModalVisible}
+              codeValue={codeValue}
+              onCodeChange={handleCodeChange}
+              onCodeSubmit={handleCodeSubmit}
+              onToggleCamera={handleToggleCamera}
+              onRequestCamera={handleRequestCamera}
+              onOpenManualCapture={handleOpenManualCapture}
+              manualStatusMessage={manualStatusMessage}
+              inputRef={codeInputRef}
+            />
 
-              <View style={styles.manualContainer}>
-                <View
-                  style={[
-                    styles.scanModeButton,
-                    {
-                      borderColor: PREMIUM_COLORS.accent_primary,
-                      shadowColor: manualGlowColor,
-                    },
-                  ]}
-                >
-                  <TouchableOpacity
-                    style={[
-                      styles.scanModeButtonInner,
-                      { backgroundColor: PREMIUM_COLORS.gradient_start },
-                    ]}
-                    onPress={handleOpenManualCapture}
-                    disabled={!hasCameraPermission && !canAskCameraPermission}
-                  >
-                    <View style={styles.scanModeButtonContent}>
-                      <ThemedText
-                        style={[
-                          styles.scanModeButtonTitle,
-                          { color: PREMIUM_COLORS.text_primary },
-                        ]}
-                      >
-                        Nouvel article manuel
-                      </ThemedText>
-                      <ThemedText
-                        style={[
-                          styles.scanModeButtonSubtitle,
-                          { color: PREMIUM_COLORS.text_muted },
-                        ]}
-                      >
-                        {manualStatusMessage}
-                      </ThemedText>
-                    </View>
-                  </TouchableOpacity>
-                </View>
-              </View>
-              <View style={styles.inputContainer}>
-                <TextInput
-                  style={styles.codeInput}
-                  placeholder="Entrer le code d'article"
-                  placeholderTextColor={PREMIUM_COLORS.text_muted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  value={codeValue}
-                  onChangeText={handleCodeChange}
-                  editable={!isScanModalVisible}
-                  ref={codeInputRef}
-                />
-                <TouchableOpacity
-                  style={styles.scanButton}
-                  onPress={handleCodeSubmit}
-                  disabled={isSubmittingScan || isScanModalVisible}
-                  accessibilityRole="button"
-                  accessibilityLabel="Enregistrer le code article"
-                >
-                  {isSubmittingScan ? (
-                    <ActivityIndicator color="#FFFFFF" size="small" />
-                  ) : (
-                    <ThemedText
-                      style={[styles.scanButtonText, { color: "#FFFFFF" }]}
-                    >
-                      &gt;
-                    </ThemedText>
-                  )}
-                </TouchableOpacity>
-              </View>
-              <Modal
-                transparent
-                visible={hasCameraPermission && isCameraActive}
-                animationType="fade"
-                onRequestClose={() => setIsCameraActive(false)}
-              >
-                <View style={styles.cameraModalOverlay}>
-                  <CameraView
-                    style={styles.cameraPreview}
-                    onBarcodeScanned={handleBarcodeScanned}
-                    barcodeScannerSettings={{ barcodeTypes: BARCODE_TYPES }}
-                    ref={cameraRef}
-                  />
-                  <View style={styles.scanFrameOverlay} pointerEvents="none">
-                    <View
-                      style={styles.scanFrame}
-                      onLayout={({ nativeEvent }) =>
-                        setScanFrameLayout(nativeEvent.layout)
-                      }
-                    />
-                  </View>
-                  <View style={styles.cameraHud}>
-                    <ThemedText style={styles.cameraHudTitle}>
-                      Mode scan
-                    </ThemedText>
-                    <ThemedText style={styles.cameraHint}>
-                      Placez le code-barres dans le cadre pour le scanner.
-                    </ThemedText>
-                    <TouchableOpacity
-                      style={[
-                        styles.cameraCloseButton,
-                        { backgroundColor: PREMIUM_COLORS.glass_bg },
-                      ]}
-                      onPress={() => setIsCameraActive(false)}
-                    >
-                      <ThemedText
-                        style={[
-                          styles.cameraCloseButtonText,
-                          { color: PREMIUM_COLORS.text_primary },
-                        ]}
-                      >
-                        Fermer
-                      </ThemedText>
-                    </TouchableOpacity>
-                  </View>
-                  {isScanBusy && cameraOverlayLabel ? (
-                    <View style={styles.cameraOverlay}>
-                      <ThemedText
-                        style={[styles.cameraOverlayText, { color: "#FFFFFF" }]}
-                      >
-                        {cameraOverlayLabel}
-                      </ThemedText>
-                    </View>
-                  ) : null}
-                </View>
-              </Modal>
-              <Modal
-                transparent
-                visible={isManualCaptureActive}
-                animationType="fade"
-                onRequestClose={handleManualCaptureClose}
-              >
-                <View style={styles.cameraModalOverlay}>
-                  <CameraView
-                    style={styles.cameraPreview}
-                    ref={manualCameraRef}
-                  />
-                  <View style={styles.cameraHud}>
-                    <ThemedText style={styles.cameraHudTitle}>
-                      Photo article
-                    </ThemedText>
-                    <ThemedText style={styles.cameraHint}>
-                      Cadrez l&apos;article puis prenez la photo.
-                    </ThemedText>
-                    <ThemedText style={styles.cameraHint}>
-                      Photos: {manualImageCount}/3
-                    </ThemedText>
-                    {manualError ? (
-                      <ThemedText style={styles.manualErrorText}>
-                        {manualError}
-                      </ThemedText>
-                    ) : null}
-                    <View style={styles.manualCaptureActions}>
-                      <TouchableOpacity
-                        style={[
-                          styles.manualCaptureButton,
-                          { backgroundColor: PREMIUM_COLORS.accent_primary },
-                        ]}
-                        onPress={handleManualCapture}
-                      >
-                        <ThemedText
-                          style={[
-                            styles.cameraCloseButtonText,
-                            { color: PREMIUM_COLORS.text_primary },
-                          ]}
-                        >
-                          Prendre photo
-                        </ThemedText>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[
-                          styles.manualContinueButton,
-                          {
-                            backgroundColor: PREMIUM_COLORS.success,
-                            opacity: manualImageUri ? 1 : 0.6,
-                          },
-                        ]}
-                        onPress={handleManualContinue}
-                        disabled={!manualImageUri}
-                      >
-                        <ThemedText
-                          style={[
-                            styles.cameraCloseButtonText,
-                            { color: PREMIUM_COLORS.text_primary },
-                          ]}
-                        >
-                          Continuer
-                        </ThemedText>
-                      </TouchableOpacity>
-                    </View>
-                    <TouchableOpacity
-                      style={[
-                        styles.cameraCloseButton,
-                        { backgroundColor: PREMIUM_COLORS.glass_bg },
-                      ]}
-                      onPress={handleManualCaptureClose}
-                    >
-                      <ThemedText
-                        style={[
-                          styles.cameraCloseButtonText,
-                          { color: PREMIUM_COLORS.text_primary },
-                        ]}
-                      >
-                        Fermer
-                      </ThemedText>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </Modal>
-            </View>
+            <ContextCard onChangeLocation={handleChangeLocation} />
 
-            <View style={styles.contextCard}>
-              <ThemedText
-                type="defaultSemiBold"
-                style={{ color: PREMIUM_COLORS.text_primary }}
-              >
-                Campagne: {session.campaign?.nom}
-              </ThemedText>
-              <ThemedText style={styles.contextMeta}>
-                Groupe: {session.group?.nom}
-              </ThemedText>
-              <ThemedText style={styles.contextMeta}>
-                Lieu: {session.location?.locationname}
-              </ThemedText>
-              <TouchableOpacity
-                style={styles.changeButton}
-                onPress={handleChangeLocation}
-              >
-                <ThemedText style={styles.changeButtonText}>
-                  Changer le lieu
-                </ThemedText>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.recapCard}>
-              <View style={styles.recapRow}>
-                <ThemedText style={styles.recapLabel}>
-                  Scans enregistres
-                </ThemedText>
-                <ThemedText
-                  type="defaultSemiBold"
-                  style={{ color: PREMIUM_COLORS.text_primary }}
-                >
-                  {totalScanCount}
-                </ThemedText>
-              </View>
-              {lastScan ? (
-                <View style={styles.recapRow}>
-                  <ThemedText style={styles.recapLabel}>
-                    Dernier scan
-                  </ThemedText>
-                  <View style={styles.recapValueColumn}>
-                    <ThemedText
-                      type="defaultSemiBold"
-                      style={{ color: PREMIUM_COLORS.text_primary }}
-                    >
-                      {lastScan.code}
-                    </ThemedText>
-                    <ThemedText style={styles.recapMeta}>
-                      {formatTimestamp(lastScan.capturedAt)}
-                    </ThemedText>
-                  </View>
-                </View>
-              ) : (
-                <ThemedText style={styles.recapEmpty}>
-                  Aucun scan enregistre pour l&apos;instant.
-                </ThemedText>
-              )}
-            </View>
+            <RecapCard totalScanCount={totalScanCount} lastScan={lastScan} />
 
             {errorDisplay ? (
               <View style={styles.errorContainer}>
@@ -2134,51 +1359,12 @@ export default function ScanScreen() {
               </View>
             ) : null}
 
-            <View style={styles.sectionHeader}>
-              <ThemedText
-                type="subtitle"
-                style={{ color: PREMIUM_COLORS.text_primary }}
-              >
-                {activeTab === "scanned"
-                  ? "Articles scannes"
-                  : "Articles du lieu"}
-              </ThemedText>
-              <ThemedText style={styles.sectionMeta}>
-                {activeTab === "scanned"
-                  ? scannedTabCountLabel
-                  : articleCountLabel}
-              </ThemedText>
-            </View>
-            <View style={styles.tabRow}>
-              {SCAN_LIST_TABS.map((tab) => {
-                const isActive = tab.id === activeTab;
-                return (
-                  <TouchableOpacity
-                    key={tab.id}
-                    style={[
-                      styles.tabButton,
-                      isActive && {
-                        backgroundColor: PREMIUM_COLORS.accent_primary,
-                      },
-                    ]}
-                    onPress={() => handleTabChange(tab.id)}
-                  >
-                    <ThemedText
-                      style={[
-                        styles.tabButtonText,
-                        {
-                          color: isActive
-                            ? PREMIUM_COLORS.text_primary
-                            : PREMIUM_COLORS.text_muted,
-                        },
-                      ]}
-                    >
-                      {tab.label}
-                    </ThemedText>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+            <ScanTabs
+              activeTab={activeTab}
+              onTabChange={handleTabChange}
+              scannedCountLabel={scannedTabCountLabel}
+              articleCountLabel={articleCountLabel}
+            />
           </View>
         }
         ListEmptyComponent={
@@ -2229,826 +1415,110 @@ export default function ScanScreen() {
         onRefresh={handleRefresh}
         alwaysBounceVertical
       />
-      <Modal
-        transparent
+      
+      <ScanDetailModal
         visible={isScanModalVisible}
-        animationType="fade"
-        onRequestClose={handleCloseScanModal}
-      >
-        <Pressable style={styles.modalOverlay} onPress={handleCloseScanModal}>
-          {scanDetail ? (
-            <Pressable
-              style={[
-                styles.modalCard,
-                {
-                  borderColor:
-                    scanDetail.status === "missing"
-                      ? PREMIUM_COLORS.error
-                      : scanDetail.status === "other"
-                      ? PREMIUM_COLORS.warning
-                      : scanDetail.status === "scanned"
-                      ? PREMIUM_COLORS.success
-                      : PREMIUM_COLORS.glass_border,
-                },
-              ]}
-              onPress={() => {}}
-            >
-              <TouchableOpacity
-                style={styles.modalCloseButton}
-                onPress={handleCloseScanModal}
-                accessibilityRole="button"
-                accessibilityLabel="Fermer la fiche article"
-              >
-                <IconSymbol
-                  name="xmark"
-                  size={16}
-                  color={PREMIUM_COLORS.text_muted}
-                />
-              </TouchableOpacity>
-              <View style={styles.modalContent}>
-                <View
-                  style={[
-                    styles.modalStatusBadge,
-                    {
-                      backgroundColor:
-                        scanDetail.status === "missing"
-                          ? "rgba(239, 68, 68, 0.15)"
-                          : scanDetail.status === "other"
-                          ? "rgba(245, 158, 11, 0.15)"
-                          : scanDetail.status === "scanned"
-                          ? "rgba(16, 185, 129, 0.15)"
-                          : PREMIUM_COLORS.glass_bg,
-                    },
-                  ]}
-                >
-                  <ThemedText
-                    style={[
-                      styles.modalStatusText,
-                      {
-                        color:
-                          scanDetail.status === "missing"
-                            ? "#FCA5A5"
-                            : scanDetail.status === "other"
-                            ? "#FCD34D"
-                            : scanDetail.status === "scanned"
-                            ? "#6EE7B7"
-                            : PREMIUM_COLORS.text_muted,
-                      },
-                    ]}
-                  >
-                    {scanDetail.statusLabel}
-                  </ThemedText>
-                </View>
-                <ThemedText type="title" style={styles.modalCodeText}>
-                  {scanDetail.code}
-                </ThemedText>
-                {scanDetail.description ? (
-                  <ThemedText style={styles.modalDescription}>
-                    {scanDetail.description}
-                  </ThemedText>
-                ) : (
-                  <ThemedText style={styles.modalDescription}>
-                    Description inconnue
-                  </ThemedText>
-                )}
-                <ThemedText style={styles.modalMeta}>
-                  Scanné à {formatTimestamp(scanDetail.capturedAt)}
-                </ThemedText>
-                {scanDetail.alreadyScanned ? (
-                  <ThemedText style={styles.alreadyScannedText}>
-                    Déjà scanné. Vous pouvez modifier l&apos;état ci-dessous.
-                  </ThemedText>
-                ) : null}
-                {scanDetail.status === "missing" ? (
-                  <View style={styles.modalField}>
-                    <ThemedText style={styles.modalFieldLabel}>
-                      Libellé court
-                    </ThemedText>
-                    <TextInput
-                      style={styles.modalInput}
-                      placeholder="Saisir un libelle court"
-                      placeholderTextColor={PREMIUM_COLORS.text_muted}
-                      value={customDescriptionValue}
-                      onChangeText={handleCustomDescriptionChange}
-                    />
-                  </View>
-                ) : null}
-                <View style={styles.modalField}>
-                  <ThemedText style={styles.modalFieldLabel}>
-                    Observation
-                  </ThemedText>
-                  <TextInput
-                    style={styles.modalInput}
-                    placeholder="Ajouter une observation"
-                    placeholderTextColor={PREMIUM_COLORS.text_muted}
-                    value={observationValue}
-                    onChangeText={handleObservationChange}
-                    multiline
-                  />
-                </View>
-                <View style={styles.modalField}>
-                  <ThemedText style={styles.modalFieldLabel}>
-                    Numéro de série (optionnel)
-                  </ThemedText>
-                  <TextInput
-                    style={styles.modalInput}
-                    placeholder="Saisir un numéro de série"
-                    placeholderTextColor={PREMIUM_COLORS.text_muted}
-                    value={serialNumberValue}
-                    onChangeText={handleSerialNumberChange}
-                    autoCapitalize="characters"
-                  />
-                </View>
-                <View style={styles.etatSection}>
-                  <ThemedText type="subtitle">Etat du materiel</ThemedText>
-                  <View style={styles.etatOptions}>
-                    {ETAT_OPTIONS.map((option) => {
-                      const isSelected = selectedEtat === option.value;
-                      return (
-                        <TouchableOpacity
-                          key={option.value}
-                          style={[
-                            styles.etatOption,
-                            {
-                              borderColor: PREMIUM_COLORS.glass_border,
-                              backgroundColor: isSelected
-                                ? "rgba(16, 185, 129, 0.15)"
-                                : "transparent",
-                            },
-                          ]}
-                          onPress={() => handleEtatSelect(option.value)}
-                        >
-                          <View style={styles.etatOptionContent}>
-                            <ThemedText
-                              style={[
-                                styles.etatOptionText,
-                                {
-                                  color: isSelected
-                                    ? PREMIUM_COLORS.text_primary
-                                    : PREMIUM_COLORS.text_muted,
-                                },
-                              ]}
-                            >
-                              {option.label}
-                            </ThemedText>
-                            <IconSymbol
-                              name="checkmark.circle.fill"
-                              size={22}
-                              color={
-                                isSelected
-                                  ? PREMIUM_COLORS.success
-                                  : PREMIUM_COLORS.text_muted
-                              }
-                            />
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  {etatErrorDisplay ? (
-                    <ThemedText style={styles.etatErrorText}>
-                      {etatErrorDisplay}
-                    </ThemedText>
-                  ) : null}
-                </View>
-              </View>
+        scanDetail={scanDetail}
+        customDesc={customDescriptionValue}
+        observation={observationValue}
+        serialNumber={serialNumberValue}
+        selectedEtat={selectedEtat}
+        isLoading={etatLoading}
+        error={etatErrorDisplay}
+        onClose={handleCloseScanModal}
+        onConfirm={handleConfirmEtat}
+        onCustomDescChange={handleCustomDescriptionChange}
+        onObservationChange={handleObservationChange}
+        onSerialNumberChange={handleSerialNumberChange}
+        onEtatSelect={handleEtatSelect}
+      />
+      
+      <CameraModal
+        visible={hasCameraPermission && isCameraActive}
+        onClose={() => setIsCameraActive(false)}
+        onBarcodeScanned={handleBarcodeScanned}
+        onLayoutFrame={(e: LayoutChangeEvent) =>
+          setScanFrameLayout(e.nativeEvent.layout)
+        }
+        isScanBusy={isScanBusy}
+        overlayLabel={cameraOverlayLabel}
+        ref={cameraRef}
+      />
 
-              {isMissingDraft ? (
-                <View style={styles.modalButtonRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.modalButtonSecondary,
-                      { borderColor: PREMIUM_COLORS.accent_primary },
-                    ]}
-                    onPress={handleCloseScanModal}
-                    disabled={etatLoading}
-                  >
-                    <ThemedText
-                      style={[
-                        styles.modalButtonSecondaryText,
-                        { color: PREMIUM_COLORS.text_primary },
-                      ]}
-                    >
-                      Ne pas enregistrer
-                    </ThemedText>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.modalButton,
-                      {
-                        backgroundColor: PREMIUM_COLORS.accent_primary,
-                        opacity: canSubmitScanDetail ? 1 : 0.6,
-                      },
-                    ]}
-                    onPress={handleConfirmEtat}
-                    disabled={!canSubmitScanDetail}
-                  >
-                    {etatLoading ? (
-                      <ActivityIndicator color="#FFFFFF" size="small" />
-                    ) : (
-                      <ThemedText style={styles.modalButtonText}>
-                        Creer article temporaire
-                      </ThemedText>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={styles.modalButtonRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.modalButtonSecondary,
-                      { borderColor: PREMIUM_COLORS.glass_border },
-                    ]}
-                    onPress={handleCloseScanModal}
-                    disabled={etatLoading}
-                  >
-                    <ThemedText
-                      style={[
-                        styles.modalButtonSecondaryText,
-                        { color: PREMIUM_COLORS.text_primary },
-                      ]}
-                    >
-                      Annuler
-                    </ThemedText>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.modalButton,
-                      {
-                        backgroundColor: PREMIUM_COLORS.accent_primary,
-                        opacity: canSubmitScanDetail ? 1 : 0.6,
-                      },
-                    ]}
-                    onPress={handleConfirmEtat}
-                    disabled={!canSubmitScanDetail}
-                  >
-                    {etatLoading ? (
-                      <ActivityIndicator color="#FFFFFF" size="small" />
-                    ) : (
-                      <ThemedText style={styles.modalButtonText}>
-                        Enregistrer et scanner suivant
-                      </ThemedText>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              )}
-            </Pressable>
-          ) : null}
-        </Pressable>
-      </Modal>
-      <Modal
-        transparent
+      <CameraModal
+        visible={isManualCaptureActive}
+        onClose={handleManualCaptureClose}
+        onBarcodeScanned={() => {}} 
+        onLayoutFrame={() => {}} 
+        isScanBusy={false}
+        overlayLabel={null}
+        ref={manualCameraRef}
+      />
+      
+      {/* 
+        NOTE: The original code had a separate manual capture modal which was basically a camera. 
+        I reused CameraModal for consistency but manual capture had some specific UI (taking photos vs scanning).
+        
+        Actually, the original code had a specific UI for manual capture in the modal.
+        Let's check if I should use ManualModal for the FORM part or the CAPTURE part.
+        
+        Original code had:
+        1. Modal visible={isManualCaptureActive}: Camera view to take picture.
+        2. Modal visible={isManualFormVisible}: Form to enter details.
+        
+        My ManualModal is the FORM part.
+        I need to handle the CAPTURE part.
+        
+        The extracted CameraModal is for scanning barcodes.
+        The manual capture needs a "Take Picture" button.
+        
+        I should revert using CameraModal for manual capture and restore the inline modal or create a specific component.
+        For now, I'll inline the Manual Capture Camera Modal since it has specific logic (take photo button, continue button).
+        
+        Wait, I see I missed extracting `ManualCaptureCameraModal`.
+        I will create it now quickly.
+      */}
+      
+      <ManualCaptureCameraModal 
+         visible={isManualCaptureActive}
+         onClose={handleManualCaptureClose}
+         onCapture={handleManualCapture}
+         onContinue={handleManualContinue}
+         imageCount={manualImageUris.length}
+         error={manualError}
+         canContinue={Boolean(manualImageUri)}
+         ref={manualCameraRef}
+      />
+
+      <ManualModal
         visible={isManualFormVisible}
-        animationType="fade"
-        onRequestClose={handleManualCancel}
-      >
-        <Pressable
-          style={[
-            styles.modalOverlay,
-            { backgroundColor: "rgba(15, 23, 42, 0.75)" },
-          ]}
-          onPress={handleManualCancel}
-        >
-          <Pressable
-            style={[
-              styles.modalCard,
-              styles.manualModalCard,
-              {
-                backgroundColor: PREMIUM_COLORS.gradient_start,
-                borderColor: PREMIUM_COLORS.glass_border,
-              },
-            ]}
-            onPress={() => {}}
-          >
-            <TouchableOpacity
-              style={styles.modalCloseButton}
-              onPress={handleManualCancel}
-              accessibilityRole="button"
-              accessibilityLabel="Fermer le formulaire manuel"
-            >
-              <IconSymbol
-                name="xmark"
-                size={16}
-                color={PREMIUM_COLORS.text_muted}
-              />
-            </TouchableOpacity>
-            <ScrollView
-              style={styles.manualFormScroll}
-              contentContainerStyle={styles.manualFormContent}
-              showsVerticalScrollIndicator={false}
-            >
-              <ThemedText type="title" style={styles.modalCodeText}>
-                Enregistrement manuel
-              </ThemedText>
-              {manualImageUris.length > 0 ? (
-                <View style={styles.manualPreviewGroup}>
-                  <Image
-                    source={{ uri: manualImageUris[0] }}
-                    style={styles.manualPreview}
-                    resizeMode="cover"
-                  />
-                  {manualImageUris.length > 1 ? (
-                    <View style={styles.manualPreviewRow}>
-                      {manualImageUris.slice(1).map((uri) => (
-                        <Image
-                          key={uri}
-                          source={{ uri }}
-                          style={styles.manualPreviewThumb}
-                          resizeMode="cover"
-                        />
-                      ))}
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-              <View style={styles.modalField}>
-                <ThemedText style={styles.modalFieldLabel}>
-                  Libellé court
-                </ThemedText>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="Ajouter un libellé court"
-                  placeholderTextColor={PREMIUM_COLORS.text_muted}
-                  value={manualCustomDesc}
-                  onChangeText={handleManualCustomDescChange}
-                />
-              </View>
-              <View style={styles.modalField}>
-                <ThemedText style={styles.modalFieldLabel}>
-                  Observation
-                </ThemedText>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="Ajouter une observation (optionnel)"
-                  placeholderTextColor={PREMIUM_COLORS.text_muted}
-                  value={manualObservation}
-                  onChangeText={handleManualObservationChange}
-                  multiline
-                />
-              </View>
-              <View style={styles.modalField}>
-                <ThemedText style={styles.modalFieldLabel}>
-                  Numéro de série
-                </ThemedText>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="Saisir un numéro de série (optionnel)"
-                  placeholderTextColor={PREMIUM_COLORS.text_muted}
-                  value={manualSerialNumber}
-                  onChangeText={handleManualSerialNumberChange}
-                  autoCapitalize="characters"
-                />
-              </View>
-              <View style={styles.etatSection}>
-                <ThemedText type="subtitle">Etat du materiel</ThemedText>
-                <View style={styles.etatOptions}>
-                  {ETAT_OPTIONS.map((option) => {
-                    const isSelected = manualEtat === option.value;
-                    return (
-                      <TouchableOpacity
-                        key={option.value}
-                        style={[
-                          styles.etatOption,
-                          {
-                            borderColor: PREMIUM_COLORS.glass_border,
-                            backgroundColor: isSelected
-                              ? "rgba(16, 185, 129, 0.15)"
-                              : "transparent",
-                          },
-                        ]}
-                        onPress={() => handleManualEtatSelect(option.value)}
-                      >
-                        <View style={styles.etatOptionContent}>
-                          <ThemedText
-                            style={[
-                              styles.etatOptionText,
-                              {
-                                color: isSelected
-                                  ? PREMIUM_COLORS.text_primary
-                                  : PREMIUM_COLORS.text_muted,
-                              },
-                            ]}
-                          >
-                            {option.label}
-                          </ThemedText>
-                          <IconSymbol
-                            name="checkmark.circle.fill"
-                            size={22}
-                            color={
-                              isSelected
-                                ? PREMIUM_COLORS.success
-                                : PREMIUM_COLORS.text_muted
-                            }
-                          />
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-              {manualError ? (
-                <ThemedText style={styles.etatErrorText}>
-                  {manualError}
-                </ThemedText>
-              ) : null}
-            </ScrollView>
-
-            <View style={styles.modalButtonRow}>
-              <TouchableOpacity
-                style={[
-                  styles.modalButtonSecondary,
-                  { borderColor: PREMIUM_COLORS.accent_primary },
-                ]}
-                onPress={handleManualCancel}
-                disabled={isManualSaving}
-              >
-                <ThemedText
-                  style={[
-                    styles.modalButtonSecondaryText,
-                    { color: PREMIUM_COLORS.text_primary },
-                  ]}
-                >
-                  Annuler
-                </ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.modalButton,
-                  {
-                    backgroundColor: PREMIUM_COLORS.accent_primary,
-                    opacity: isManualSaving ? 0.6 : 1,
-                  },
-                ]}
-                onPress={handleManualSubmit}
-                disabled={isManualSaving}
-              >
-                {isManualSaving ? (
-                  <ActivityIndicator color="#FFFFFF" size="small" />
-                ) : (
-                  <ThemedText style={styles.modalButtonText}>
-                    Enregistrer
-                  </ThemedText>
-                )}
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        imageUris={manualImageUris}
+        customDesc={manualCustomDesc}
+        observation={manualObservation}
+        serialNumber={manualSerialNumber}
+        etat={manualEtat}
+        error={manualError}
+        isSaving={isManualSaving}
+        onClose={handleManualCancel}
+        onSubmit={handleManualSubmit}
+        onCustomDescChange={handleManualCustomDescChange}
+        onObservationChange={handleManualObservationChange}
+        onSerialNumberChange={handleManualSerialNumberChange}
+        onEtatSelect={handleManualEtatSelect}
+      />
     </PremiumScreenWrapper>
   );
 }
 
+// I need to define ManualCaptureCameraModal locally or create a file.
+// I'll create a file for it.
+import { ManualCaptureCameraModal } from "./scan-screen/components/manual-capture-camera-modal";
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
   headerContainer: {
     gap: 16,
     paddingHorizontal: 20,
     paddingTop: 20,
-  },
-  header: {
-    gap: 6,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: PREMIUM_COLORS.text_muted,
-  },
-  contextCard: {
-    backgroundColor: PREMIUM_COLORS.glass_bg,
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.glass_border,
-    borderRadius: 16,
-    padding: 16,
-    gap: 6,
-  },
-  cameraCard: {
-    backgroundColor: PREMIUM_COLORS.glass_bg,
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.glass_border,
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
-  },
-  recapCard: {
-    backgroundColor: PREMIUM_COLORS.glass_bg,
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.glass_border,
-    borderRadius: 16,
-    padding: 16,
-    gap: 10,
-  },
-  recapRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  recapLabel: {
-    fontSize: 13,
-    color: PREMIUM_COLORS.text_muted,
-  },
-  recapValueColumn: {
-    alignItems: "flex-end",
-    gap: 2,
-  },
-  recapMeta: {
-    fontSize: 12,
-    color: PREMIUM_COLORS.text_muted,
-  },
-  recapEmpty: {
-    fontSize: 13,
-    color: PREMIUM_COLORS.text_muted,
-    fontStyle: "italic",
-  },
-  cameraMeta: {
-    fontSize: 13,
-    color: PREMIUM_COLORS.text_muted,
-  },
-  scanModeButton: {
-    borderWidth: 2,
-    borderRadius: 20,
-    padding: 3,
-    borderColor: PREMIUM_COLORS.accent_primary,
-    shadowColor: PREMIUM_COLORS.accent_primary,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
-    elevation: 12,
-    overflow: "hidden",
-  },
-  scanModeGlow: {
-    position: "absolute",
-    top: -10,
-    left: -10,
-    right: -10,
-    bottom: -10,
-    opacity: 0.3,
-    borderRadius: 24,
-    backgroundColor: PREMIUM_COLORS.accent_primary,
-  },
-  scanModeRadial: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    top: -80,
-    left: "50%",
-    marginLeft: -110,
-    opacity: 0.15,
-    backgroundColor: PREMIUM_COLORS.accent_primary,
-  },
-  scanModeButtonInner: {
-    width: "100%",
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  scanModeBackground: {
-    position: "absolute",
-    top: 2,
-    left: 2,
-    right: 2,
-    bottom: 2,
-    borderRadius: 14,
-    opacity: 0.45,
-  },
-  scanModeScanLine: {
-    position: "absolute",
-    top: 0,
-    left: 14,
-    right: 14,
-    height: 6,
-    borderRadius: 999,
-    opacity: 0.8,
-  },
-  scanModeButtonContent: {
-    alignItems: "center",
-    gap: 4,
-  },
-  scanModeButtonTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-    color: PREMIUM_COLORS.text_primary,
-  },
-  scanModeButtonSubtitle: {
-    fontSize: 12,
-    fontWeight: "600",
-    letterSpacing: 0.4,
-    color: PREMIUM_COLORS.text_muted,
-  },
-  manualContainer: {
-    marginTop: 12,
-  },
-  cameraPreview: {
-    height: "100%",
-    width: "100%",
-  },
-  cameraModalOverlay: {
-    flex: 1,
-    backgroundColor: "#0B1220",
-  },
-  cameraCloseButton: {
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  cameraCloseButtonText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: PREMIUM_COLORS.text_primary,
-  },
-  manualCaptureActions: {
-    flexDirection: "row",
-    gap: 12,
-    justifyContent: "center",
-    marginTop: 12,
-  },
-  manualCaptureButton: {
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  manualContinueButton: {
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  manualErrorText: {
-    fontSize: 13,
-    textAlign: "center",
-    marginTop: 8,
-    color: PREMIUM_COLORS.error,
-  },
-  cameraHint: {
-    fontSize: 13,
-    color: PREMIUM_COLORS.text_muted,
-  },
-  cameraHud: {
-    position: "absolute",
-    left: 16,
-    right: 16,
-    bottom: 24,
-    gap: 8,
-    alignItems: "center",
-  },
-  cameraHudTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-  cameraOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.45)",
-  },
-  cameraOverlayText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  scanFrameOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  scanFrame: {
-    width: "80%",
-    height: "28%",
-    borderWidth: 2,
-    borderColor: "#FFFFFF",
-    borderRadius: 12,
-  },
-  contextMeta: {
-    fontSize: 13,
-    color: PREMIUM_COLORS.text_muted,
-  },
-  changeButton: {
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(255, 107, 0, 0.1)",
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.accent_primary,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    marginTop: 10,
-  },
-  changeButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: PREMIUM_COLORS.accent_primary,
-  },
-  inputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginTop: 8,
-  },
-  codeInput: {
-    flex: 1,
-    backgroundColor: PREMIUM_COLORS.input_bg,
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.input_border,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: PREMIUM_COLORS.text_primary,
-  },
-  scanButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 14,
-    backgroundColor: PREMIUM_COLORS.accent_primary,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: PREMIUM_COLORS.accent_primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  scanButtonText: {
-    fontSize: 20,
-    fontWeight: "600",
-    color: PREMIUM_COLORS.text_primary,
-  },
-  errorContainer: {
-    backgroundColor: PREMIUM_COLORS.error_bg,
-    borderRadius: 14,
-    padding: 16,
-    gap: 8,
-    marginTop: 6,
-  },
-  infoContainer: {
-    backgroundColor: "rgba(255, 107, 0, 0.08)",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "rgba(255, 107, 0, 0.2)",
-    padding: 16,
-    gap: 8,
-    marginTop: 6,
-  },
-  errorTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: PREMIUM_COLORS.error,
-  },
-  errorMessage: {
-    fontSize: 14,
-    color: PREMIUM_COLORS.text_muted,
-  },
-  infoTitle: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: PREMIUM_COLORS.accent_primary,
-  },
-  infoMessage: {
-    fontSize: 14,
-    color: PREMIUM_COLORS.text_muted,
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  sectionMeta: {
-    fontSize: 13,
-    color: PREMIUM_COLORS.text_muted,
-  },
-  tabRow: {
-    flexDirection: "row",
-    backgroundColor: PREMIUM_COLORS.glass_bg,
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.glass_border,
-    borderRadius: 999,
-    padding: 4,
-    marginTop: 12,
-    gap: 6,
-  },
-  tabButton: {
-    flex: 1,
-    borderRadius: 999,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    alignItems: "center",
-  },
-  tabButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: PREMIUM_COLORS.text_muted,
   },
   listContent: {
     flexGrow: 1,
@@ -3056,29 +1526,6 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 24,
     gap: 12,
-  },
-  recentCard: {
-    backgroundColor: PREMIUM_COLORS.glass_bg,
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.glass_border,
-    borderRadius: 16,
-    padding: 16,
-    gap: 8,
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  recentDescription: {
-    fontSize: 14,
-    color: PREMIUM_COLORS.text_muted,
-    lineHeight: 20,
-  },
-  recentMeta: {
-    fontSize: 12,
-    color: PREMIUM_COLORS.text_muted,
-    marginTop: 2,
   },
   emptyContainer: {
     paddingVertical: 32,
@@ -3120,184 +1567,38 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: PREMIUM_COLORS.text_primary,
   },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: "center",
-    padding: 20,
-    backgroundColor: "rgba(10, 22, 40, 0.92)",
-  },
-  modalCard: {
-    backgroundColor: PREMIUM_COLORS.gradient_start,
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.glass_border,
-    borderRadius: 24,
-    padding: 24,
-    minHeight: "65%",
-    justifyContent: "space-between",
-    gap: 20,
-  },
-  manualModalCard: {
-    maxHeight: "90%",
-  },
-  manualFormScroll: {
-    flex: 1,
-  },
-  manualFormContent: {
-    gap: 16,
-    paddingBottom: 12,
-  },
-  modalCloseButton: {
-    position: "absolute",
-    top: 16,
-    right: 16,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: PREMIUM_COLORS.glass_bg,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 10,
-  },
-  modalContent: {
-    alignItems: "center",
-    gap: 14,
-  },
-  modalStatusBadge: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
-  },
-  modalStatusText: {
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  modalCodeText: {
-    textAlign: "center",
-    color: PREMIUM_COLORS.text_primary,
-  },
-  modalDescription: {
-    fontSize: 18,
-    textAlign: "center",
-    color: PREMIUM_COLORS.text_secondary,
-  },
-  manualPreview: {
-    width: "100%",
-    height: 180,
+  errorContainer: {
+    backgroundColor: PREMIUM_COLORS.error_bg,
     borderRadius: 14,
-    borderWidth: 2,
-    borderColor: PREMIUM_COLORS.glass_border,
-  },
-  manualPreviewGroup: {
-    width: "100%",
-    gap: 10,
-  },
-  manualPreviewRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  manualPreviewThumb: {
-    flex: 1,
-    height: 80,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.glass_border,
-  },
-  modalMeta: {
-    fontSize: 14,
-    textAlign: "center",
-    color: PREMIUM_COLORS.text_muted,
-  },
-  alreadyScannedText: {
-    fontSize: 13,
-    textAlign: "center",
-    color: PREMIUM_COLORS.warning,
-  },
-  modalField: {
-    width: "100%",
+    padding: 16,
     gap: 8,
+    marginTop: 6,
   },
-  modalFieldLabel: {
-    fontSize: 13,
+  infoContainer: {
+    backgroundColor: "rgba(255, 107, 0, 0.08)",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255, 107, 0, 0.2)",
+    padding: 16,
+    gap: 8,
+    marginTop: 6,
+  },
+  errorTitle: {
+    fontSize: 16,
     fontWeight: "600",
+    color: PREMIUM_COLORS.error,
+  },
+  errorMessage: {
+    fontSize: 14,
     color: PREMIUM_COLORS.text_muted,
   },
-  modalInput: {
-    backgroundColor: PREMIUM_COLORS.input_bg,
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.input_border,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: PREMIUM_COLORS.text_primary,
-  },
-  modalButton: {
-    flex: 1,
-    backgroundColor: PREMIUM_COLORS.accent_primary,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: "center",
-    shadowColor: PREMIUM_COLORS.accent_primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  modalButtonText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: PREMIUM_COLORS.text_primary,
-  },
-  modalButtonRow: {
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "stretch",
-  },
-  modalButtonSecondary: {
-    flex: 1,
-    backgroundColor: PREMIUM_COLORS.glass_bg,
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.glass_border,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: "center",
-  },
-  modalButtonSecondaryText: {
+  infoTitle: {
     fontSize: 15,
     fontWeight: "600",
-    color: PREMIUM_COLORS.text_secondary,
+    color: PREMIUM_COLORS.accent_primary,
   },
-  etatSection: {
-    width: "100%",
-    gap: 12,
-    paddingTop: 8,
-  },
-  etatOptions: {
-    gap: 10,
-  },
-  etatOption: {
-    backgroundColor: PREMIUM_COLORS.glass_bg,
-    borderWidth: 1,
-    borderColor: PREMIUM_COLORS.glass_border,
-    borderRadius: 14,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-  },
-  etatOptionContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  etatOptionText: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: PREMIUM_COLORS.text_primary,
-  },
-  etatErrorText: {
-    fontSize: 13,
-    textAlign: "center",
-    color: PREMIUM_COLORS.error,
-    marginTop: 4,
+  infoMessage: {
+    fontSize: 14,
+    color: PREMIUM_COLORS.text_muted,
   },
 });

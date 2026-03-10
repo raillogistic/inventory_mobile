@@ -732,6 +732,15 @@ export default function DrawerLayout() {
           }}
         />
         <Drawer.Screen
+          name="reconciliation"
+          options={{
+            title: "Contrôle & Rapprochement",
+            drawerIcon: ({ color }) => (
+              <IconSymbol name="checkmark.seal.fill" size={20} color={color} />
+            ),
+          }}
+        />
+        <Drawer.Screen
           name="history"
           options={{
             title: "Historique",
